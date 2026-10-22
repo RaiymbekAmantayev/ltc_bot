@@ -87,7 +87,7 @@ function multiSelect(name, label, options, selected, allLabel) {
 
 const name = (o) => [o.last_name, o.first_name, o.middle_name].filter(Boolean).join(' ') || '—';
 
-export function dashboardPage({ f, stats, statuses, branches, rows, total, perPage, agentsBy, tgBy, regField }) {
+export function dashboardPage({ f, stats, statuses, branches, rows, total, reg, perPage, agentsBy, tgBy, regField }) {
   const pages = Math.max(1, Math.ceil(total / perPage));
   const statusMs = multiSelect(
     'status', 'Статус',
@@ -95,7 +95,7 @@ export function dashboardPage({ f, stats, statuses, branches, rows, total, perPa
     f.statuses, 'Все статусы',
   );
   const branchMs = multiSelect('branch', 'Филиал', branches.map((b) => ({ value: b.id, label: b.name })), f.branches, 'Все филиалы');
-  const botOpts = [['', 'Все'], ['yes', 'Подключены к боту'], ['no', 'Не подключены']]
+  const botOpts = [['', 'Все'], ['yes', 'Подключены к боту'], ['no', 'Не подключены'], ['parent', 'Зарегистрирован родитель'], ['student', 'Зарегистрирован ученик']]
     .map(([v, l]) => `<option value="${v}"${f.bot === v ? ' selected' : ''}>${l}</option>`)
     .join('');
 
@@ -144,6 +144,8 @@ ${f.page < pages ? `<a class="btn2 sec" href="/${qs(f, { page: f.page + 1 })}">�
 <div class="card"><div class="n">${stats.students}</div><div class="l">учеников в базе</div></div>
 <div class="card"><div class="n">${stats.connected}</div><div class="l">учеников, к кому подключён бот</div></div>
 <div class="card"><div class="n">${stats.activeUsers}</div><div class="l">активных получателей в боте</div></div>
+<div class="card"><div class="n">${stats.parents}</div><div class="l">родителей зарегистрировалось</div></div>
+<div class="card"><div class="n">${stats.studentUsers}</div><div class="l">учеников зарегистрировалось</div></div>
 <div class="card"><div class="n">${stats.branches}</div><div class="l">филиалов</div></div>
 </div>
 <form class="filters" method="get" action="/">
@@ -153,7 +155,7 @@ ${branchMs}
 <div><label>Telegram-бот</label><select name="bot">${botOpts}</select></div>
 <div style="display:flex;gap:8px"><button>Найти</button><a class="btn2 sec" href="/">Сброс</a></div>
 </form>
-<div class="bar"><span>Найдено: <b>${total}</b></span><div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn2" href="/broadcast${qs(f)}">📣 Рассылка по фильтру</a><a class="btn2 sec" href="/export.csv${qs(f)}">⬇ Экспорт CSV</a></div></div>
+<div class="bar"><span>Найдено: <b>${total}</b> · зарегистрировалось родителей: <b>${reg.parents}</b>, учеников: <b>${reg.students}</b></span><div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn2" href="/broadcast${qs(f)}">📣 Рассылка по фильтру</a><a class="btn2 sec" href="/export.csv${qs(f)}">⬇ Экспорт CSV</a></div></div>
 <div class="card tw" style="padding:0"><table>
 <thead><tr><th>ID</th><th>ClientId</th><th>Ученик</th><th>Статус</th><th>Филиалы</th><th>В боте</th></tr></thead>
 <tbody>${body || '<tr><td colspan="6" class="no" style="text-align:center;padding:30px">Ничего не найдено</td></tr>'}</tbody></table></div>

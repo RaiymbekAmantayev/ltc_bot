@@ -175,11 +175,15 @@ export function registerAdmin(bot) {
       `SELECT (SELECT COUNT(*) FROM students) AS students,
               (SELECT COUNT(*) FROM tg_users) AS tg_users,
               (SELECT COUNT(DISTINCT tg_user_id) FROM tg_links) AS linked,
+              (SELECT COUNT(DISTINCT tg_user_id) FROM tg_links WHERE relation = 'parent') AS parents,
+              (SELECT COUNT(DISTINCT tg_user_id) FROM tg_links WHERE relation = 'student') AS student_users,
               (SELECT COUNT(*) FROM tg_users WHERE is_blocked = 1) AS blocked`,
     );
     const rows = await query(
       `SELECT b.name,
               COUNT(DISTINCT s.client_id) AS students,
+              COUNT(DISTINCT IF(l.relation = 'parent', l.tg_user_id, NULL)) AS parents,
+              COUNT(DISTINCT IF(l.relation = 'student', l.tg_user_id, NULL)) AS student_users,
               COUNT(DISTINCT u.chat_id) AS reachable
        FROM branches b
        LEFT JOIN student_branches sb ON sb.branch_id = b.id
@@ -189,9 +193,9 @@ export function registerAdmin(bot) {
        WHERE b.is_active = 1
        GROUP BY b.id, b.name ORDER BY b.name`,
     );
-    const lines = rows.map((r) => `• ${r.name}: учеников ${r.students}, доступно в боте ${r.reachable}`);
+    const lines = rows.map((r) => `• ${r.name}: учеников ${r.students}, зарегистрировались: родителей ${r.parents}, учеников ${r.student_users}, доступно в боте ${r.reachable}`);
     return ctx.reply(
-      `Учеников в базе: ${t.students}\nПользователей бота: ${t.tg_users} (привязаны к ученикам: ${t.linked}, заблокировали: ${t.blocked})\n\nПо филиалам:\n${lines.join('\n') || '—'}`,
+      `Учеников в базе: ${t.students}\nПользователей бота: ${t.tg_users} (привязаны к ученикам: ${t.linked}, заблокировали: ${t.blocked})\nЗарегистрировались: родителей ${t.parents}, учеников ${t.student_users}\n\nПо филиалам:\n${lines.join('\n') || '—'}`,
     );
   });
 

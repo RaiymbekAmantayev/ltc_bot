@@ -70,13 +70,14 @@ function parseFilters(q) {
     q: String(q.q || '').trim().slice(0, 100),
     statuses, // несколько статусов; '__none__' = «без статуса»
     branches, // несколько филиалов
-    bot: ['yes', 'no'].includes(q.bot) ? q.bot : '',
+    bot: ['yes', 'no', 'parent', 'student'].includes(q.bot) ? q.bot : '',
     page: Math.max(1, parseInt(q.page, 10) || 1),
   };
 }
 
 const BOT_EXISTS = `EXISTS (SELECT 1 FROM tg_links l JOIN tg_users u ON u.id = l.tg_user_id
   WHERE l.student_client_id = s.client_id AND u.is_blocked = 0 AND u.is_subscribed = 1)`;
+const RELATION_EXISTS = (rel) => `EXISTS (SELECT 1 FROM tg_links l WHERE l.student_client_id = s.client_id AND l.relation = '${rel}')`;
 
 function buildWhere(f) {
   const where = [];
@@ -104,6 +105,7 @@ function buildWhere(f) {
   }
   if (f.bot === 'yes') where.push(BOT_EXISTS);
   if (f.bot === 'no') where.push(`NOT ${BOT_EXISTS}`);
+  if (f.bot === 'parent' || f.bot === 'student') where.push(RELATION_EXISTS(f.bot));
   return { sql: where.length ? `WHERE ${where.join(' AND ')}` : '', params };
 }
 
@@ -254,17 +256,27 @@ export function startWebServer(bot = null) {
         )
       : [];
 
+    // сколько аккаунтов Telegram зарегистрировалось как родитель / ученик среди учеников по фильтру
+    const [reg] = await query(
+      `SELECT COUNT(DISTINCT IF(l.relation = 'parent', l.tg_user_id, NULL)) AS parents,
+              COUNT(DISTINCT IF(l.relation = 'student', l.tg_user_id, NULL)) AS students
+       FROM students s JOIN tg_links l ON l.student_client_id = s.client_id ${w.sql}`,
+      w.params,
+    );
+
     const [st] = await query(
       `SELECT (SELECT COUNT(*) FROM students) AS students,
               (SELECT COUNT(DISTINCT student_client_id) FROM tg_links) AS connected,
               (SELECT COUNT(*) FROM tg_users WHERE is_blocked = 0 AND is_subscribed = 1) AS activeUsers,
+              (SELECT COUNT(DISTINCT tg_user_id) FROM tg_links WHERE relation = 'parent') AS parents,
+              (SELECT COUNT(DISTINCT tg_user_id) FROM tg_links WHERE relation = 'student') AS studentUsers,
               (SELECT COUNT(*) FROM branches WHERE is_active = 1) AS branches`,
     );
     const statuses = await query('SELECT status, COUNT(*) AS n FROM students GROUP BY status ORDER BY n DESC');
     const branches = await query('SELECT id, name FROM branches WHERE is_active = 1 ORDER BY name');
 
     res.send(dashboardPage({
-      f, stats: st, statuses, branches, rows, total: Number(total), perPage: PER_PAGE,
+      f, stats: st, statuses, branches, rows, total: Number(total), reg, perPage: PER_PAGE,
       agentsBy: group(agents, 'student_client_id'), tgBy: group(tgs, 'student_client_id'),
       regField: config.regIdField,
     }));
