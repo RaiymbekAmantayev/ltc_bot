@@ -1,0 +1,36 @@
+services:
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - dbdata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${DB_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${ADMIN_WEB_PORT:-3000}:${ADMIN_WEB_PORT:-3000}"
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      WEB_PORT: 3000
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  dbdata:
