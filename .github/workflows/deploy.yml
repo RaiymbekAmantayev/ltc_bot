@@ -1,0 +1,50 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --omit=dev
+      - name: Проверка синтаксиса
+        run: find src -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Проверка импортов
+        run: |
+          for f in $(find src -name '*.js' ! -path src/index.js ! -path 'src/scripts/*'); do
+            node -e "import('./$f').then(() => process.exit(0))" || exit 1
+          done
+        env:
+          BOT_TOKEN: '0:ci'
+          DB_USER: ci
+          DB_NAME: ci
+          HH_SUBDOMAIN: ci
+          HH_AUTH_KEY: ci
+
+  deploy:
+    needs: check
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Настройка SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          echo "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+      - name: Деплой
+        run: ssh -o BatchMode=yes deploy@${{ secrets.DEPLOY_HOST }} "${{ github.sha }}"
