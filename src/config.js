@@ -43,5 +43,24 @@ export const config = {
     secret: process.env.ADMIN_WEB_SECRET || '',
     secureCookie: process.env.ADMIN_WEB_SECURE_COOKIE === '1',
   },
+  // страница выгрузок для менторов (/mentor): свои логины, без доступа к рассылкам.
+  // Ментор Алматы видит только филиалы MENTOR_ALMATY_BRANCHES, ментор Астаны — все остальные.
+  mentor: {
+    accounts: {
+      almaty: { login: process.env.MENTOR_ALMATY_LOGIN || 'almaty', password: process.env.MENTOR_ALMATY_PASSWORD || '' },
+      astana: { login: process.env.MENTOR_ASTANA_LOGIN || 'astana', password: process.env.MENTOR_ASTANA_PASSWORD || '' },
+    },
+    almatyBranches: list(process.env.MENTOR_ALMATY_BRANCHES || 'Сейфуллина'),
+    attendanceTestCategory: process.env.MENTOR_ATTENDANCE_TEST_CATEGORY || 'old daily',
+    activeStatuses: list(process.env.MENTOR_ACTIVE_STATUSES || 'Занимается,Регистрация,Заморозка'),
+    scheduleField: process.env.MENTOR_SCHEDULE_FIELD || 'РАСПИСАНИЕ',
+    timeField: process.env.MENTOR_TIME_FIELD || 'ВРЕМЯ ЗАНЯТИЙ',
+  },
+  // «Мои звонки» — для выгрузки «14+» (звонки ученикам и родителям)
+  moizvonki: {
+    url: process.env.MOIZVONKI_URL || '',
+    user: process.env.MOIZVONKI_USER || '',
+    apiKey: process.env.MOIZVONKI_API_KEY || '',
+  },
   allowedStatuses: list(process.env.RECIPIENT_STATUSES),
 };

@@ -3,9 +3,12 @@ import express from 'express';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { query } from '../db.js';
-import { loginPage, dashboardPage, errorPage, broadcastFormPage, broadcastsPage } from './views.js';
+import ExcelJS from 'exceljs';
+import { loginPage, mentorLoginPage, dashboardPage, errorPage, broadcastFormPage, broadcastsPage, mentorPage } from './views.js';
 import { createBroadcast, cancelBroadcast, startWorker } from '../services/broadcast.js';
 import { toRecipients, ROW_COLUMNS } from '../services/recipients.js';
+import { getDataCheck, getNotAttending, getAdaptation, getNoCalls, getDailyCalls, PROBLEMS } from '../services/hhReports.js';
+import { isMoiZvonkiConfigured } from '../moizvonki/client.js';
 export const startWeb = startWebServer;
 const PER_PAGE = 50;
 const SESSION_TTL = 12 * 60 * 60 * 1000;
@@ -15,17 +18,21 @@ const SECRET = config.web.secret
   : crypto.createHash('sha256').update(`${config.botToken}:${config.web.password}`).digest();
 
 const sign = (v) => crypto.createHmac('sha256', SECRET).update(v).digest('base64url');
-const makeToken = () => {
-  const exp = String(Date.now() + SESSION_TTL);
-  return `${exp}.${sign(exp)}`;
+// роль в сессии: admin — вся админка; almaty / astana — менторы, только выгрузки (/mentor) по своим филиалам
+const ROLES = ['admin', 'almaty', 'astana'];
+const MENTOR_TITLE = { almaty: 'Ментор Алматы', astana: 'Ментор Астана' };
+const makeToken = (role) => {
+  const payload = `${role}.${Date.now() + SESSION_TTL}`;
+  return `${payload}.${sign(payload)}`;
 };
-function validToken(tok) {
-  if (!tok) return false;
-  const [exp, sig] = tok.split('.');
-  if (!exp || !sig || Number(exp) < Date.now()) return false;
+/** Роль из cookie-сессии или null. */
+function tokenRole(tok) {
+  if (!tok) return null;
+  const [role, exp, sig] = tok.split('.');
+  if (!ROLES.includes(role) || !exp || !sig || Number(exp) < Date.now()) return null;
   const a = Buffer.from(sig);
-  const b = Buffer.from(sign(exp));
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
+  const b = Buffer.from(sign(`${role}.${exp}`));
+  return a.length === b.length && crypto.timingSafeEqual(a, b) ? role : null;
 }
 function readCookie(req, key) {
   const h = req.headers.cookie || '';
@@ -35,10 +42,21 @@ function readCookie(req, key) {
   }
   return null;
 }
-function passwordOk(input) {
+function passwordEq(input, password) {
+  if (!password) return false;
   const a = crypto.createHash('sha256').update(String(input)).digest();
-  const b = crypto.createHash('sha256').update(config.web.password).digest();
+  const b = crypto.createHash('sha256').update(password).digest();
   return crypto.timingSafeEqual(a, b);
+}
+/** Ментор по логину и паролю: 'almaty' | 'astana' | null. */
+function mentorByLogin(login, password) {
+  const name = String(login ?? '').trim().toLowerCase();
+  for (const [role, acc] of Object.entries(config.mentor.accounts)) {
+    // пароль проверяем всегда, чтобы время ответа не выдавало существующий логин
+    const ok = passwordEq(password, acc.password);
+    if (ok && acc.login.toLowerCase() === name) return role;
+  }
+  return null;
 }
 
 // ограничение попыток входа: 10 за 15 минут с одного IP
@@ -56,10 +74,26 @@ function addAttempt(ip) {
 
 const wrap = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
+// Сессии раздельные: sid — админка, msid — выгрузки менторов. В браузере активна только одна:
+// вход в админку завершает сессию ментора и наоборот, поэтому переход в любую сторону требует пароль.
+const ADMIN_COOKIE = 'sid';
+const MENTOR_COOKIE = 'msid';
+
 function requireAuth(req, res, next) {
-  if (validToken(readCookie(req, 'sid'))) return next();
+  if (tokenRole(readCookie(req, ADMIN_COOKIE)) === 'admin') return next();
   return res.redirect('/login');
 }
+/** Выгрузки — только под логином ментора; роль (almaty / astana) кладём в req.role. */
+function requireMentor(req, res, next) {
+  const role = tokenRole(readCookie(req, MENTOR_COOKIE));
+  if (role && role !== 'admin') {
+    req.role = role;
+    return next();
+  }
+  return res.redirect('/mentor/login');
+}
+const setSession = (res, cookie, role) =>
+  res.cookie(cookie, makeToken(role), { httpOnly: true, sameSite: 'strict', secure: config.web.secureCookie, maxAge: SESSION_TTL });
 
 const asArray = (v) => (v === undefined || v === null ? [] : [].concat(v));
 
@@ -123,14 +157,85 @@ const group = (rows, key) => {
   return m;
 };
 
-const csvCell = (v) => {
-  let s = String(v ?? '');
-  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`; // защита от CSV-инъекций в Excel
-  return `"${s.replace(/"/g, '""')}"`;
+/**
+ * Выгрузка в Excel. columns: [{ header, width }], rows: массивы значений в порядке колонок.
+ * Строки пишутся как текст (не формулы), поэтому «=…» из данных не исполняется.
+ */
+async function sendXlsx(res, filename, sheetName, columns, rows) {
+  return sendWorkbook(res, filename, [{ name: sheetName, columns, rows }]);
+}
+
+/** Excel с несколькими листами: sheets = [{ name, columns, rows, filter = true }]. */
+async function sendWorkbook(res, filename, sheets) {
+  const wb = new ExcelJS.Workbook();
+  for (const { name, columns, rows, filter = true } of sheets) {
+    const ws = wb.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 1 }] });
+    ws.columns = columns.map((c) => ({ header: c.header, width: c.width ?? 18, ...(c.wrap ? { style: { alignment: { wrapText: true, vertical: 'top' } } } : {}) }));
+    for (const r of rows) ws.addRow(r.map((v) => (v === null || v === undefined ? '' : v)));
+    ws.getRow(1).font = { bold: true };
+    ws.getRow(1).alignment = { vertical: 'middle', wrapText: true };
+    if (filter) ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: columns.length } };
+  }
+  res.set({
+    'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'Content-Disposition': `attachment; filename="${filename}"`,
+  });
+  await wb.xlsx.write(res);
+  res.end();
+}
+
+// ---------- выгрузки для менторов ----------
+const UNREG = {
+  none: 'NOT EXISTS (SELECT 1 FROM tg_links l WHERE l.student_client_id = s.client_id)',
+  parent: "NOT EXISTS (SELECT 1 FROM tg_links l WHERE l.student_client_id = s.client_id AND l.relation = 'parent')",
+  student: "NOT EXISTS (SELECT 1 FROM tg_links l WHERE l.student_client_id = s.client_id AND l.relation = 'student')",
+};
+const parseUnreg = (q) => (Object.hasOwn(UNREG, q.who) ? q.who : 'none');
+const parseProblems = (q) => [...new Set(asArray(q.problem).map(String).filter((x) => Object.hasOwn(PROBLEMS, x)))];
+
+/** Филиалы, доступные роли: админ — все, ментор Алматы — MENTOR_ALMATY_BRANCHES, ментор Астаны — остальные. */
+async function scopeBranches(role) {
+  const all = await query('SELECT id, name FROM branches WHERE is_active = 1 ORDER BY name');
+  if (role === 'admin') return all;
+  const almaty = new Set(config.mentor.almatyBranches.map((x) => x.toLowerCase()));
+  return all.filter((b) => almaty.has(b.name.trim().toLowerCase()) === (role === 'almaty'));
+}
+/** Выбранные филиалы в пределах доступных; ничего не выбрано — все доступные (для админа null = без ограничения). */
+async function effectiveBranches(role, f) {
+  const ids = (await scopeBranches(role)).map((b) => b.id);
+  const chosen = f.branches.filter((id) => ids.includes(id));
+  if (chosen.length) return chosen;
+  return role === 'admin' ? null : ids;
+}
+const inBranches = (ids) => (r) => ids === null || r.branchIds.some((id) => ids.includes(id));
+
+async function unregisteredWhere(role, f, who) {
+  const ids = await effectiveBranches(role, f);
+  const w = buildWhere({ ...f, q: '', bot: '', branches: ids ?? [] });
+  const conds = [w.sql.replace(/^WHERE /, ''), UNREG[who]].filter(Boolean);
+  if (ids && !ids.length) conds.push('0 = 1'); // у ментора нет ни одного филиала
+  return { sql: `WHERE ${conds.join(' AND ')}`, params: w.params };
+}
+
+/** Колонки о звонках «Мои звонки» (main — последний звонок в 14+, самый длинный разговор в ежедневной). */
+const CALL_COLS = (mainLabel) => [
+  { header: `Номер (${mainLabel})`, width: 26 }, { header: `Дата (${mainLabel})`, width: 17 }, { header: 'Длительность, сек', width: 11 },
+  { header: 'Все звонки (дата — номер — длительность)', width: 60, wrap: true },
+];
+const callCells = (r) => [r.callNumber, r.callDate, r.callSec, r.allCalls];
+
+const COL = {
+  hh: { header: 'ID HolliHop', width: 12 },
+  name: { header: 'ФИО', width: 32 },
+  status: { header: 'Статус', width: 14 },
+  branch: { header: 'Филиал', width: 16 },
+  phone: { header: 'Телефон ученика', width: 18 },
+  parents: { header: 'Родители', width: 40 },
+  groups: { header: 'Группы и расписание', width: 50 },
 };
 
 // ---------- рассылка из веб-админки ----------
-const csrfOf = (req) => sign(`csrf:${readCookie(req, 'sid')}`);
+const csrfOf = (req) => sign(`csrf:${readCookie(req, ADMIN_COOKIE)}`);
 function csrfOk(req) {
   const a = Buffer.from(String(req.body?.csrf ?? ''));
   const b = Buffer.from(csrfOf(req));
@@ -212,22 +317,37 @@ export function startWebServer(bot = null) {
 
   app.post('/login', (req, res) => {
     if (tooManyAttempts(req.ip)) return res.status(429).send(loginPage('Слишком много попыток. Попробуйте позже.'));
-    if (!passwordOk(req.body.password ?? '')) {
+    if (!passwordEq(req.body.password ?? '', config.web.password)) {
       addAttempt(req.ip);
       return res.status(401).send(loginPage('Неверный пароль'));
     }
-    res.cookie('sid', makeToken(), {
-      httpOnly: true,
-      sameSite: 'strict',
-      secure: config.web.secureCookie,
-      maxAge: SESSION_TTL,
-    });
+    res.clearCookie(MENTOR_COOKIE);
+    setSession(res, ADMIN_COOKIE, 'admin');
     return res.redirect('/');
   });
 
   app.get('/logout', (req, res) => {
-    res.clearCookie('sid');
+    res.clearCookie(ADMIN_COOKIE);
     res.redirect('/login');
+  });
+
+  app.get('/mentor/login', (req, res) => res.send(mentorLoginPage()));
+
+  app.post('/mentor/login', (req, res) => {
+    if (tooManyAttempts(req.ip)) return res.status(429).send(mentorLoginPage('Слишком много попыток. Попробуйте позже.'));
+    const role = mentorByLogin(req.body.login, req.body.password ?? '');
+    if (!role) {
+      addAttempt(req.ip);
+      return res.status(401).send(mentorLoginPage('Неверный логин или пароль'));
+    }
+    res.clearCookie(ADMIN_COOKIE);
+    setSession(res, MENTOR_COOKIE, role);
+    return res.redirect('/mentor');
+  });
+
+  app.get('/mentor/logout', (req, res) => {
+    res.clearCookie(MENTOR_COOKIE);
+    res.redirect('/mentor/login');
   });
 
   app.get('/', requireAuth, wrap(async (req, res) => {
@@ -282,7 +402,7 @@ export function startWebServer(bot = null) {
     }));
   }));
 
-  app.get('/export.csv', requireAuth, wrap(async (req, res) => {
+  app.get('/export.xlsx', requireAuth, wrap(async (req, res) => {
     const f = parseFilters(req.query);
     const w = buildWhere(f);
     const rows = await query(
@@ -294,14 +414,10 @@ export function startWebServer(bot = null) {
        FROM students s ${w.sql} ORDER BY s.last_name, s.first_name LIMIT 100000`,
       w.params,
     );
-    const head = ['ID', 'ClientId', 'Фамилия', 'Имя', 'Отчество', 'Статус', 'Телефон ученика', 'Филиалы', 'Родители', 'Подключено в боте'];
-    const lines = [head.map(csvCell).join(';')];
-    for (const r of rows) {
-      lines.push([r.hh_id, r.client_id, r.last_name, r.first_name, r.middle_name, r.status, r.mobile || r.phone, r.branches, r.parents, r.bot_users]
-        .map(csvCell).join(';'));
-    }
-    res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="students.csv"' });
-    res.send(`\uFEFF${lines.join('\r\n')}`); // BOM, чтобы Excel открыл кириллицу
+    await sendXlsx(res, 'students.xlsx', 'Ученики',
+      [COL.hh, { header: 'ClientId', width: 10 }, { header: 'Фамилия', width: 18 }, { header: 'Имя', width: 16 }, { header: 'Отчество', width: 16 },
+        COL.status, COL.phone, COL.branch, COL.parents, { header: 'Подключено в боте', width: 12 }],
+      rows.map((r) => [r.hh_id, r.client_id, r.last_name, r.first_name, r.middle_name, r.status, r.mobile || r.phone, r.branches, r.parents, Number(r.bot_users)]));
   }));
 
   app.get('/broadcast', requireAuth, wrap(async (req, res) => {
@@ -364,6 +480,131 @@ export function startWebServer(bot = null) {
     if (!csrfOk(req)) return res.status(403).send(errorPage('Сессия устарела — обновите страницу.'));
     if (/^\d+$/.test(req.params.id)) await cancelBroadcast(Number(req.params.id));
     res.redirect('/broadcasts');
+  }));
+
+  // ---------- страница выгрузок (менторы и админы) ----------
+  app.get('/mentor', requireMentor, wrap(async (req, res) => {
+    const f = parseFilters(req.query);
+    const who = parseUnreg(req.query);
+    const w = await unregisteredWhere(req.role, f, who);
+    const [{ n: unregistered }] = await query(`SELECT COUNT(*) AS n FROM students s ${w.sql}`, w.params);
+    res.send(mentorPage({
+      f, who, unregistered: Number(unregistered),
+      statuses: await query('SELECT status, COUNT(*) AS n FROM students GROUP BY status ORDER BY n DESC'),
+      branches: await scopeBranches(req.role),
+      title: MENTOR_TITLE[req.role],
+      activeStatuses: config.mentor.activeStatuses,
+      fields: [config.mentor.scheduleField, config.mentor.timeField],
+      testCategory: config.mentor.attendanceTestCategory,
+      today: new Date().toLocaleDateString('sv-SE', { timeZone: config.sync.timezone }),
+    }));
+  }));
+
+  app.get('/mentor/unregistered.xlsx', requireMentor, wrap(async (req, res) => {
+    const f = parseFilters(req.query);
+    const w = await unregisteredWhere(req.role, f, parseUnreg(req.query));
+    const rows = await query(
+      `SELECT s.hh_id, s.last_name, s.first_name, s.middle_name, s.status, s.mobile, s.phone,
+              ${BRANCHES_SUB} AS branches,
+              (SELECT GROUP_CONCAT(CONCAT_WS(' ', a.last_name, a.first_name, COALESCE(a.mobile, a.phone, '')) SEPARATOR '; ')
+                 FROM agents a WHERE a.student_client_id = s.client_id) AS parents,
+              (SELECT GROUP_CONCAT(DISTINCT IF(l.relation = 'parent', 'родитель', 'ученик') SEPARATOR ', ')
+                 FROM tg_links l WHERE l.student_client_id = s.client_id) AS registered
+       FROM students s ${w.sql} ORDER BY branches, s.last_name, s.first_name LIMIT 100000`,
+      w.params,
+    );
+    await sendXlsx(res, 'ne-zaregistrirovany-v-bote.xlsx', 'Не в боте',
+      [COL.hh, COL.name, COL.status, COL.branch, COL.phone, COL.parents, { header: 'Уже зарегистрирован в боте', width: 20 }],
+      rows.map((r) => [r.hh_id, [r.last_name, r.first_name, r.middle_name].filter(Boolean).join(' '), r.status,
+        r.branches, r.mobile || r.phone, r.parents, r.registered || 'никто']));
+  }));
+
+  app.get('/mentor/hh-check.xlsx', requireMentor, wrap(async (req, res) => {
+    const f = parseFilters(req.query);
+    const wanted = parseProblems(req.query);
+    const ids = await effectiveBranches(req.role, f);
+    const { rows } = await getDataCheck({ refresh: req.query.refresh === '1' });
+    const list = rows.filter((r) => inBranches(ids)(r) && (!wanted.length || r.problems.some((p) => wanted.includes(p))));
+    const mark = (r, p) => (r.problems.includes(p) ? 'да' : '');
+    await sendXlsx(res, 'proverka-dannyh.xlsx', 'Проверка данных',
+      [COL.hh, COL.name, COL.status, COL.branch, { header: 'Проблемы', width: 40 },
+        ...Object.values(PROBLEMS).map((header) => ({ header, width: 13 })),
+        { header: `${config.mentor.scheduleField} (поле)`, width: 14 }, { header: `${config.mentor.timeField} (поле)`, width: 14 },
+        COL.groups, { header: 'Расхождение', width: 50 }],
+      list.map((r) => [r.hh_id, r.name, r.status, r.branches, r.problems.map((p) => PROBLEMS[p]).join(', '),
+        ...Object.keys(PROBLEMS).map((p) => mark(r, p)), r.schedule, r.time, r.groups, r.mismatch]));
+  }));
+
+  app.get('/mentor/not-attending.xlsx', requireMentor, wrap(async (req, res) => {
+    const f = parseFilters(req.query);
+    const ids = await effectiveBranches(req.role, f);
+    const { rows } = await getNotAttending({ refresh: req.query.refresh === '1' });
+    await sendXlsx(res, 'ne-poseshchayut.xlsx', 'Не посещают',
+      [COL.hh, COL.name, COL.status, COL.branch, { header: `Последний результат «${config.mentor.attendanceTestCategory}»`, width: 18 },
+        COL.groups, COL.phone, COL.parents],
+      rows.filter(inBranches(ids)).map((r) => [r.hh_id, r.name, r.status, r.branches, r.lastResult, r.groups, r.phone, r.parents]));
+  }));
+
+  app.get('/mentor/no-calls.xlsx', requireMentor, wrap(async (req, res) => {
+    if (!isMoiZvonkiConfigured()) return res.status(503).send(errorPage('Интеграция «Мои звонки» не настроена (MOIZVONKI_* в .env).'));
+    const f = parseFilters(req.query);
+    const ids = await effectiveBranches(req.role, f);
+    const { rows, days } = await getNoCalls({ refresh: req.query.refresh === '1' });
+    await sendXlsx(res, '14plus.xlsx', '14+',
+      [COL.hh, COL.name, COL.status, { header: 'Моб. телефон', width: 18 }, { header: 'Телефоны родителей', width: 36, wrap: true },
+        { header: 'Ментор', width: 24 }, { header: 'День обзвона постоянное', width: 14 }, { header: 'Статус звонка', width: 14 }, COL.branch,
+        { header: `Звонков за ${days} дн.`, width: 10 }, { header: 'Самый длинный разговор, сек', width: 12 }, ...CALL_COLS('последний звонок')],
+      rows.filter(inBranches(ids)).map((r) => [r.hh_id, r.name, r.status, r.phone, r.parentPhones, r.mentor, r.callDay, r.callStatus, r.branches,
+        r.calls, r.noPhones ? 'нет телефонов' : r.maxSec, ...callCells(r)]));
+  }));
+
+  app.get('/mentor/daily.xlsx', requireMentor, wrap(async (req, res) => {
+    if (!isMoiZvonkiConfigured()) return res.status(503).send(errorPage('Интеграция «Мои звонки» не настроена (MOIZVONKI_* в .env).'));
+    const day = String(req.query.day ?? '').trim();
+    if (!/^\d{1,2}$/.test(day)) return res.status(400).send(errorPage('Выберите день обзвона.'));
+    const today = new Date().toLocaleDateString('sv-SE', { timeZone: config.sync.timezone });
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date)) && req.query.date <= today ? req.query.date : today;
+
+    const f = parseFilters(req.query);
+    const ids = await effectiveBranches(req.role, f);
+    const { rows: all, minSec } = await getDailyCalls({ day, date, refresh: req.query.refresh === '1' });
+    const rows = all.filter(inBranches(ids));
+
+    // сводка: всего и по каждому ментору
+    const sum = (list) => [list.length, list.filter((r) => r.reached).length, list.filter((r) => r.actual).length];
+    const byMentor = new Map();
+    for (const r of rows) {
+      const key = r.mentor || 'без ментора';
+      if (!byMentor.has(key)) byMentor.set(key, []);
+      byMentor.get(key).push(r);
+    }
+    const dateRu = date.split('-').reverse().join('.');
+    await sendWorkbook(res, `ezhednevnaya-den-${day}-${date}.xlsx`, [
+      {
+        name: 'Сводка',
+        filter: false,
+        columns: [{ header: `День обзвона ${day} · звонки за ${dateRu}`, width: 36 }, { header: 'Запланировано', width: 15 },
+          { header: 'Дозвон (статус в HolliHop)', width: 18 }, { header: `Фактический (разговор > ${minSec} сек)`, width: 20 }],
+        rows: [['Всего', ...sum(rows)], [], ['Ментор'], ...[...byMentor].map(([m, list]) => [m, ...sum(list)])],
+      },
+      {
+        name: 'Ученики',
+        columns: [COL.hh, COL.name, COL.status, { header: 'Моб. телефон', width: 18 }, { header: 'Телефоны родителей', width: 36, wrap: true },
+          { header: 'Ментор', width: 24 }, { header: 'День обзвона постоянное', width: 12 }, { header: 'Статус звонка', width: 14 }, COL.branch,
+          { header: `Фактический звонок ${dateRu}`, width: 14 }, { header: 'Звонков за день', width: 10 }, ...CALL_COLS('самый длинный разговор')],
+        rows: rows.map((r) => [r.hh_id, r.name, r.status, r.phone, r.parentPhones, r.mentor, r.callDay, r.callStatus, r.branches,
+          r.actual ? 'да' : 'нет', r.calls, ...callCells(r)]),
+      },
+    ]);
+  }));
+
+  app.get('/mentor/adaptation.xlsx', requireMentor, wrap(async (req, res) => {
+    const f = parseFilters(req.query);
+    const ids = await effectiveBranches(req.role, f);
+    const { rows } = await getAdaptation({ refresh: req.query.refresh === '1' });
+    await sendXlsx(res, 'adaptaciya.xlsx', 'Адаптация',
+      [COL.hh, COL.name, COL.status, COL.branch, { header: 'Создан в HolliHop', width: 18 }, COL.groups, COL.phone, COL.parents],
+      rows.filter(inBranches(ids)).map((r) => [r.hh_id, r.name, r.status, r.branches, r.created, r.groups, r.phone, r.parents]));
   }));
 
   // eslint-disable-next-line no-unused-vars

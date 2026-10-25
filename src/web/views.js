@@ -59,6 +59,19 @@ ${error ? `<div class="err">${esc(error)}</div>` : ''}
   );
 }
 
+export function mentorLoginPage(error) {
+  return layout(
+    'Вход — выгрузки',
+    `<div class="login"><div class="card"><h1>📋 Выгрузки для менторов</h1>
+${error ? `<div class="err">${esc(error)}</div>` : ''}
+<form method="post" action="/mentor/login">
+<label for="l">Логин</label><input id="l" name="login" autocomplete="username" autofocus required>
+<div style="margin-top:10px"><label for="p">Пароль</label><input id="p" type="password" name="password" autocomplete="current-password" required></div>
+<div style="margin-top:14px"><button style="width:100%">Войти</button></div>
+</form></div></div>`,
+  );
+}
+
 export function errorPage(msg = 'Внутренняя ошибка') {
   return layout('Ошибка', `<div class="login"><div class="card"><h1>Ошибка</h1><p>${esc(msg)}</p><a href="/">На главную</a></div></div>`);
 }
@@ -138,7 +151,7 @@ ${f.page < pages ? `<a class="btn2 sec" href="/${qs(f, { page: f.page + 1 })}">�
   return layout(
     'Админка — ученики',
     `<div class="hero"><div class="wrap"><div><h1>📣 Админка рассылок</h1><p>Ученики, филиалы и подключение к Telegram-боту</p></div>
-<div style="display:flex;gap:8px"><a class="btn" href="/broadcasts">Рассылки</a><a class="btn" href="/logout">Выйти</a></div></div></div>
+<div style="display:flex;gap:8px"><a class="btn" href="/broadcasts">Рассылки</a><a class="btn" href="/mentor">Выгрузки</a><a class="btn" href="/logout">Выйти</a></div></div></div>
 <div class="wrap">
 <div class="cards">
 <div class="card"><div class="n">${stats.students}</div><div class="l">учеников в базе</div></div>
@@ -155,7 +168,7 @@ ${branchMs}
 <div><label>Telegram-бот</label><select name="bot">${botOpts}</select></div>
 <div style="display:flex;gap:8px"><button>Найти</button><a class="btn2 sec" href="/">Сброс</a></div>
 </form>
-<div class="bar"><span>Найдено: <b>${total}</b> · зарегистрировалось родителей: <b>${reg.parents}</b>, учеников: <b>${reg.students}</b></span><div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn2" href="/broadcast${qs(f)}">📣 Рассылка по фильтру</a><a class="btn2 sec" href="/export.csv${qs(f)}">⬇ Экспорт CSV</a></div></div>
+<div class="bar"><span>Найдено: <b>${total}</b> · зарегистрировалось родителей: <b>${reg.parents}</b>, учеников: <b>${reg.students}</b></span><div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn2" href="/broadcast${qs(f)}">📣 Рассылка по фильтру</a><a class="btn2 sec" href="/export.xlsx${qs(f)}">⬇ Экспорт в Excel</a></div></div>
 <div class="card tw" style="padding:0"><table>
 <thead><tr><th>ID</th><th>ClientId</th><th>Ученик</th><th>Статус</th><th>Филиалы</th><th>В боте</th></tr></thead>
 <tbody>${body || '<tr><td colspan="6" class="no" style="text-align:center;padding:30px">Ничего не найдено</td></tr>'}</tbody></table></div>
@@ -166,7 +179,7 @@ ${pager}
 }
 
 const HEAD = (title, sub) => `<div class="hero"><div class="wrap"><div><h1>${title}</h1><p>${sub}</p></div>
-<div style="display:flex;gap:8px"><a class="btn" href="/">Ученики</a><a class="btn" href="/broadcasts">Рассылки</a><a class="btn" href="/logout">Выйти</a></div></div></div>`;
+<div style="display:flex;gap:8px"><a class="btn" href="/">Ученики</a><a class="btn" href="/broadcasts">Рассылки</a><a class="btn" href="/mentor">Выгрузки</a><a class="btn" href="/logout">Выйти</a></div></div></div>`;
 
 export function broadcastFormPage({ f, title, counts, csrf, error, text = '', audience = 'all', html = false, personalize = true, restricted = [] }) {
   const opt = (v, label, c) =>
@@ -198,6 +211,87 @@ ${error ? `<div class="err">${esc(error)}</div>` : ''}
 </form>
 <p class="note">Сообщение с фото, видео или файлом можно разослать из Telegram-бота командой /broadcast.</p>
 </div></div>`,
+  );
+}
+
+const PROBLEM_LABELS = {
+  photo: 'Нет фото',
+  schedule: 'Не заполнено расписание',
+  time: 'Не заполнено время занятий',
+  mismatch: 'Некорректное расписание (поле не совпадает с группой)',
+  nogroup: 'Не состоит ни в одной группе',
+};
+
+export function mentorPage({ f, who, unregistered, statuses, branches, title, activeStatuses, fields, testCategory, today }) {
+  const statusMs = multiSelect(
+    'status', 'Статус',
+    statuses.map((x) => ({ value: x.status ?? '__none__', label: `${x.status ?? 'Без статуса'} (${x.n})` })),
+    f.statuses, 'Все статусы',
+  );
+  const branchOpts = branches.map((b) => ({ value: b.id, label: b.name }));
+  const branchMs = (selected = []) => multiSelect('branch', 'Филиал', branchOpts, selected, 'Все мои филиалы');
+  const whoOpts = [['none', 'Никто не зарегистрирован'], ['parent', 'Не зарегистрирован родитель'], ['student', 'Не зарегистрирован ученик']]
+    .map(([v, l]) => `<option value="${v}"${who === v ? ' selected' : ''}>${l}</option>`)
+    .join('');
+  const problemChecks = Object.entries(PROBLEM_LABELS)
+    .map(([v, l]) => `<label class="chk"><input type="checkbox" name="problem" value="${v}"><span>${esc(l)}</span></label>`)
+    .join('');
+  const refresh = '<label class="chk"><input type="checkbox" name="refresh" value="1"><span>Обновить данные из HolliHop (не брать из кэша)</span></label>';
+  const section = (icon, head, body) => `<div class="card" style="margin-bottom:16px"><h2 style="margin-top:0;font-size:18px">${icon} ${head}</h2>${body}</div>`;
+  const nav = '<a class="btn" href="/login">Админка</a>'; // вход в админку всегда по паролю администратора
+  const active = esc(activeStatuses.join(', '));
+
+  return layout(
+    'Выгрузки',
+    `<div class="hero"><div class="wrap"><div><h1>📋 Выгрузки</h1><p>${esc(title)} · филиалы: ${esc(branches.map((b) => b.name).join(', ') || 'нет')}</p></div>
+<div style="display:flex;gap:8px">${nav}<a class="btn" href="/mentor/logout">Выйти</a></div></div></div>
+<div class="wrap" style="margin-top:-40px;max-width:900px">
+${section('🤖', 'Не зарегистрированы в Telegram-боте', `
+<form class="filters" method="get" action="/mentor" style="margin-top:0">
+${statusMs}
+${branchMs(f.branches)}
+<div><label>Кто не зарегистрирован</label><select name="who">${whoOpts}</select></div>
+<div><button>Показать</button></div>
+</form>
+<div class="bar"><span>Учеников в списке: <b>${unregistered}</b></span>
+<a class="btn2" href="/mentor/unregistered.xlsx${qs({ ...f, q: '', bot: '' }, { who })}">⬇ Скачать Excel</a></div>
+<p class="note" style="margin:0">ID HolliHop, ФИО, статус, филиал, телефон ученика, родители с телефонами и кто из них уже подключился к боту.</p>`)}
+${section('🚫', 'Не посещают', `
+<p class="note" style="margin:0 0 8px">Активные ученики (${active}), у которых за последние 7 дней нет ни одного результата теста категории
+«${esc(testCategory)}» — ни группового, ни персонального. В файле — дата последнего такого результата за 30 дней.</p>
+<form method="get" action="/mentor/not-attending.xlsx">${branchMs()}${refresh}<button>⬇ Скачать Excel</button></form>`)}
+${section('📅', 'Ежедневная (план обзвона)', `
+<p class="note" style="margin:0 0 8px">Активные ученики, у которых в HolliHop поле «День обзвона постоянное» равно выбранному дню.
+Файл из двух листов: <b>Сводка</b> — запланировано / «Статус звонка» = Дозвон / фактически был разговор больше 90 секунд по «Мои звонки»
+(номер ученика или родителей) за выбранную дату, всего и по каждому ментору; <b>Ученики</b> — список.</p>
+<form method="get" action="/mentor/daily.xlsx">
+<div class="filters" style="margin:0">
+<div><label>День обзвона</label><input type="number" name="day" min="0" max="31" required placeholder="например 3"></div>
+<div><label>Дата звонков (по умолчанию сегодня)</label><input type="date" name="date" value="${esc(today)}" max="${esc(today)}"></div>
+${branchMs()}
+</div>
+${refresh}<button>⬇ Скачать Excel</button></form>`)}
+${section('📞', '14+ (нет звонков за 2 недели)', `
+<p class="note" style="margin:0 0 8px">Активные ученики (${active}), с которыми за последние 14 дней по «Мои звонки» не было разговора от 90 секунд —
+ни на номер ученика, ни на номера родителей (звонков не было вовсе или все короче 90 сек).
+Колонки: ID, ФИО, статус, моб. телефон, ментор, «День обзвона постоянное», «Статус звонка».</p>
+<form method="get" action="/mentor/no-calls.xlsx">${branchMs()}${refresh}<button>⬇ Скачать Excel</button></form>`)}
+${section('🌱', 'Адаптация', `
+<p class="note" style="margin:0 0 8px">Активные ученики (${active}), созданные в HolliHop за последние 7 дней.</p>
+<form method="get" action="/mentor/adaptation.xlsx">${branchMs()}${refresh}<button>⬇ Скачать Excel</button></form>`)}
+${section('🗂', 'Проверка данных в HolliHop', `
+<p class="note" style="margin:0 0 8px">Активные ученики (${active}), у которых не хватает хотя бы одного из данных.
+Расписание и время берутся из пользовательских полей «${esc(fields[0])}» и «${esc(fields[1])}» и сравниваются с текущим расписанием групп ученика
+(время совпадает, если начало отличается не больше чем на 10 минут).</p>
+<form method="get" action="/mentor/hh-check.xlsx">
+${branchMs()}
+<label style="margin-top:10px">Что проверить (ничего не выбрано — все проблемы)</label>
+${problemChecks}
+${refresh}
+<button>⬇ Скачать Excel</button>
+</form>`)}
+<p class="note">Выгрузки «Не посещают», «Адаптация» и «Проверка данных» берут данные из HolliHop напрямую и кэшируются на 10 минут; первая выгрузка формируется до ~30 секунд.</p>
+</div>`,
   );
 }
 
