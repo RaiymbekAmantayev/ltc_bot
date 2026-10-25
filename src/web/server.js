@@ -301,6 +301,8 @@ export function startWebServer(bot = null) {
 
   const app = express();
   app.disable('x-powered-by');
+  // за nginx на этом же сервере: req.ip — реальный адрес клиента (иначе лимит попыток входа общий для всех)
+  app.set('trust proxy', 'loopback');
   app.use((req, res, next) => {
     res.set({
       'Cache-Control': 'no-store',
