@@ -97,14 +97,29 @@ const setSession = (res, cookie, role) =>
 
 const asArray = (v) => (v === undefined || v === null ? [] : [].concat(v));
 
-const parseDate = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v ?? '')) && !Number.isNaN(Date.parse(v)) ? String(v) : '');
+/**
+ * Время регистрации в боте показываем и фильтруем по Астане (UTC+5).
+ * created_at пишется в часовом поясе сессии MySQL; DB_SHIFT — на сколько секунд он отличается от Астаны.
+ */
+const ASTANA_SEC = 5 * 3600;
+const DB_SHIFT = `(TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), NOW()) - ${ASTANA_SEC})`;
+const toDbTime = (expr) => `DATE_ADD(${expr}, INTERVAL ${DB_SHIFT} SECOND)`;
+const astanaFmt = (col) => `DATE_FORMAT(DATE_SUB(${col}, INTERVAL ${DB_SHIFT} SECOND), '%d.%m.%Y %H:%i')`;
 
-/** Условия на время регистрации привязки (alias — таблица tg_links). */
+/** 'YYYY-MM-DD' или 'YYYY-MM-DDTHH:MM' → 'YYYY-MM-DDTHH:MM'; без времени — начало (или конец) дня. */
+function parseDateTime(v, endOfDay = false) {
+  const m = /^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}))?/.exec(String(v ?? '').trim());
+  if (!m || Number.isNaN(Date.parse(`${m[1]}T${m[2] || '00:00'}:00Z`))) return '';
+  return `${m[1]}T${m[2] || (endOfDay ? '23:59' : '00:00')}`;
+}
+const sqlTime = (v) => `${v.replace('T', ' ')}:00`;
+
+/** Условия на время регистрации привязки (alias — таблица tg_links); «по» — включительно до конца минуты. */
 function regRange(f, alias = 'l') {
   const conds = [];
   const params = [];
-  if (f.regFrom) { conds.push(`${alias}.created_at >= ?`); params.push(f.regFrom); }
-  if (f.regTo) { conds.push(`${alias}.created_at < DATE_ADD(?, INTERVAL 1 DAY)`); params.push(f.regTo); }
+  if (f.regFrom) { conds.push(`${alias}.created_at >= ${toDbTime('?')}`); params.push(sqlTime(f.regFrom)); }
+  if (f.regTo) { conds.push(`${alias}.created_at < ${toDbTime('DATE_ADD(?, INTERVAL 1 MINUTE)')}`); params.push(sqlTime(f.regTo)); }
   return { conds, params };
 }
 
@@ -116,8 +131,8 @@ function parseFilters(q) {
     statuses, // несколько статусов; '__none__' = «без статуса»
     branches, // несколько филиалов
     bot: ['yes', 'no', 'parent', 'student'].includes(q.bot) ? q.bot : '',
-    regFrom: parseDate(q.reg_from), // дата регистрации в боте: с / по (включительно)
-    regTo: parseDate(q.reg_to),
+    regFrom: parseDateTime(q.reg_from), // дата и время регистрации в боте по Астане: с / по (включительно)
+    regTo: parseDateTime(q.reg_to, true),
     page: Math.max(1, parseInt(q.page, 10) || 1),
   };
 }
@@ -313,7 +328,7 @@ async function filterTitle(f) {
     parts.push(`филиал: ${rows.map((r) => r.name).join(', ') || f.branches.join(', ')}`);
   }
   if (f.q) parts.push(`поиск: ${f.q}`);
-  if (f.regFrom || f.regTo) parts.push(`регистрация в боте: ${f.regFrom || '…'} — ${f.regTo || '…'}`);
+  if (f.regFrom || f.regTo) parts.push(`регистрация в боте (Астана): ${f.regFrom.replace('T', ' ') || '…'} — ${f.regTo.replace('T', ' ') || '…'}`);
   return parts.join('; ') || 'все ученики';
 }
 
@@ -396,7 +411,7 @@ export function startWebServer(bot = null) {
       : [];
     const tgs = ids.length
       ? await query(
-          `SELECT l.student_client_id, l.relation, DATE_FORMAT(l.created_at, '%d.%m.%Y %H:%i') AS reg_at, u.chat_id, u.username, u.first_name, u.is_blocked, u.is_subscribed, u.lang
+          `SELECT l.student_client_id, l.relation, ${astanaFmt('l.created_at')} AS reg_at, u.chat_id, u.username, u.first_name, u.is_blocked, u.is_subscribed, u.lang
            FROM tg_links l JOIN tg_users u ON u.id = l.tg_user_id WHERE l.student_client_id IN (?)`,
           [ids],
         )
@@ -439,13 +454,13 @@ export function startWebServer(bot = null) {
               (SELECT GROUP_CONCAT(CONCAT_WS(' ', a.last_name, a.first_name, COALESCE(a.mobile, a.phone, '')) SEPARATOR '; ')
                  FROM agents a WHERE a.student_client_id = s.client_id) AS parents,
               ${BOT_COUNT_SUB} AS bot_users,
-              (SELECT DATE_FORMAT(MIN(l.created_at), '%d.%m.%Y %H:%i') FROM tg_links l WHERE l.student_client_id = s.client_id) AS reg_at
+              (SELECT ${astanaFmt('MIN(l.created_at)')} FROM tg_links l WHERE l.student_client_id = s.client_id) AS reg_at
        FROM students s ${w.sql} ORDER BY s.last_name, s.first_name LIMIT 100000`,
       w.params,
     );
     await sendXlsx(res, 'students.xlsx', 'Ученики',
       [COL.hh, { header: 'ClientId', width: 10 }, { header: 'Фамилия', width: 18 }, { header: 'Имя', width: 16 }, { header: 'Отчество', width: 16 },
-        COL.status, COL.phone, COL.branch, COL.parents, { header: 'Подключено в боте', width: 12 }, { header: 'Первая регистрация в боте', width: 18 }],
+        COL.status, COL.phone, COL.branch, COL.parents, { header: 'Подключено в боте', width: 12 }, { header: 'Первая регистрация в боте (Астана)', width: 18 }],
       rows.map((r) => [r.hh_id, r.client_id, r.last_name, r.first_name, r.middle_name, r.status, r.mobile || r.phone, r.branches, r.parents, Number(r.bot_users), r.reg_at]));
   }));
 

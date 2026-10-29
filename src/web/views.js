@@ -168,8 +168,8 @@ ${f.page < pages ? `<a class="btn2 sec" href="/${qs(f, { page: f.page + 1 })}">�
 ${statusMs}
 ${branchMs}
 <div><label>Telegram-бот</label><select name="bot">${botOpts}</select></div>
-<div><label>Регистрация в боте с</label><input type="date" name="reg_from" value="${esc(f.regFrom)}"></div>
-<div><label>по</label><input type="date" name="reg_to" value="${esc(f.regTo)}"></div>
+<div><label>Регистрация в боте с (Астана)</label><input type="datetime-local" name="reg_from" value="${esc(f.regFrom)}"></div>
+<div><label>по (Астана)</label><input type="datetime-local" name="reg_to" value="${esc(f.regTo)}"></div>
 <div style="display:flex;gap:8px"><button>Найти</button><a class="btn2 sec" href="/">Сброс</a></div>
 </form>
 <div class="bar"><span>Найдено: <b>${total}</b> · зарегистрировалось родителей: <b>${reg.parents}</b>, учеников: <b>${reg.students}</b></span><div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn2" href="/broadcast${qs(f)}">📣 Рассылка по фильтру</a><a class="btn2 sec" href="/export.xlsx${qs(f)}">⬇ Экспорт в Excel</a></div></div>
