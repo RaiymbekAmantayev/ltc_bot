@@ -88,8 +88,10 @@ CREATE TABLE IF NOT EXISTS tg_links (
   tg_user_id        BIGINT UNSIGNED NOT NULL,
   student_client_id INT UNSIGNED NOT NULL,
   relation          ENUM('student','parent') NOT NULL,
+  created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,  -- когда зарегистрировался в боте по этому ученику
   PRIMARY KEY (tg_user_id, student_client_id, relation),
   KEY idx_link_student (student_client_id),
+  KEY idx_link_created (created_at),
   CONSTRAINT fk_link_user FOREIGN KEY (tg_user_id) REFERENCES tg_users (id) ON DELETE CASCADE,
   CONSTRAINT fk_link_student FOREIGN KEY (student_client_id) REFERENCES students (client_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

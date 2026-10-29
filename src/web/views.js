@@ -82,6 +82,8 @@ export function qs(f, extra = {}) {
   for (const x of f.statuses || []) p.append('status', x);
   for (const x of f.branches || []) p.append('branch', String(x));
   if (f.bot) p.set('bot', f.bot);
+  if (f.regFrom) p.set('reg_from', f.regFrom);
+  if (f.regTo) p.set('reg_to', f.regTo);
   for (const [k, v] of Object.entries(extra)) if (v !== '' && v !== undefined && v !== null) p.set(k, String(v));
   const str = p.toString();
   return str ? `?${str}` : '';
@@ -124,7 +126,7 @@ export function dashboardPage({ f, stats, statuses, branches, rows, total, reg, 
             .map((t) => {
               const st = t.is_blocked ? '<span class="bad">заблокировал бота</span>' : t.is_subscribed ? '<span class="ok">активен</span>' : 'отписался';
               const who = t.username ? `@${esc(t.username)}` : esc(t.first_name || `chat ${t.chat_id}`);
-              return `<li>${who} — ${t.relation === 'parent' ? 'родитель' : 'ученик'}, ${t.lang === 'ru' ? 'RU' : 'KZ'}, ${st}</li>`;
+              return `<li>${who} — ${t.relation === 'parent' ? 'родитель' : 'ученик'}, ${t.lang === 'ru' ? 'RU' : 'KZ'}, ${st}${t.reg_at ? `, с ${esc(t.reg_at)}` : ''}</li>`;
             })
             .join('')}</ul>`
         : '<div class="no">никто не подключён</div>';
@@ -166,6 +168,8 @@ ${f.page < pages ? `<a class="btn2 sec" href="/${qs(f, { page: f.page + 1 })}">�
 ${statusMs}
 ${branchMs}
 <div><label>Telegram-бот</label><select name="bot">${botOpts}</select></div>
+<div><label>Регистрация в боте с</label><input type="date" name="reg_from" value="${esc(f.regFrom)}"></div>
+<div><label>по</label><input type="date" name="reg_to" value="${esc(f.regTo)}"></div>
 <div style="display:flex;gap:8px"><button>Найти</button><a class="btn2 sec" href="/">Сброс</a></div>
 </form>
 <div class="bar"><span>Найдено: <b>${total}</b> · зарегистрировалось родителей: <b>${reg.parents}</b>, учеников: <b>${reg.students}</b></span><div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn2" href="/broadcast${qs(f)}">📣 Рассылка по фильтру</a><a class="btn2 sec" href="/export.xlsx${qs(f)}">⬇ Экспорт в Excel</a></div></div>
@@ -188,6 +192,8 @@ export function broadcastFormPage({ f, title, counts, csrf, error, text = '', au
     `<input type="hidden" name="q" value="${esc(f.q)}">`,
     ...f.statuses.map((x) => `<input type="hidden" name="status" value="${esc(x)}">`),
     ...f.branches.map((x) => `<input type="hidden" name="branch" value="${x}">`),
+    ...(f.regFrom ? [`<input type="hidden" name="reg_from" value="${esc(f.regFrom)}">`] : []),
+    ...(f.regTo ? [`<input type="hidden" name="reg_to" value="${esc(f.regTo)}">`] : []),
   ].join('');
   return layout(
     'Новая рассылка',

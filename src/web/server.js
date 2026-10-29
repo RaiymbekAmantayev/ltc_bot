@@ -97,6 +97,17 @@ const setSession = (res, cookie, role) =>
 
 const asArray = (v) => (v === undefined || v === null ? [] : [].concat(v));
 
+const parseDate = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v ?? '')) && !Number.isNaN(Date.parse(v)) ? String(v) : '');
+
+/** Условия на время регистрации привязки (alias — таблица tg_links). */
+function regRange(f, alias = 'l') {
+  const conds = [];
+  const params = [];
+  if (f.regFrom) { conds.push(`${alias}.created_at >= ?`); params.push(f.regFrom); }
+  if (f.regTo) { conds.push(`${alias}.created_at < DATE_ADD(?, INTERVAL 1 DAY)`); params.push(f.regTo); }
+  return { conds, params };
+}
+
 function parseFilters(q) {
   const statuses = [...new Set(asArray(q.status).map((x) => String(x).trim().slice(0, 100)).filter(Boolean))].slice(0, 50);
   const branches = [...new Set(asArray(q.branch).map(String).filter((x) => /^\d{1,10}$/.test(x)).map(Number))].slice(0, 200);
@@ -105,6 +116,8 @@ function parseFilters(q) {
     statuses, // несколько статусов; '__none__' = «без статуса»
     branches, // несколько филиалов
     bot: ['yes', 'no', 'parent', 'student'].includes(q.bot) ? q.bot : '',
+    regFrom: parseDate(q.reg_from), // дата регистрации в боте: с / по (включительно)
+    regTo: parseDate(q.reg_to),
     page: Math.max(1, parseInt(q.page, 10) || 1),
   };
 }
@@ -140,6 +153,13 @@ function buildWhere(f) {
   if (f.bot === 'yes') where.push(BOT_EXISTS);
   if (f.bot === 'no') where.push(`NOT ${BOT_EXISTS}`);
   if (f.bot === 'parent' || f.bot === 'student') where.push(RELATION_EXISTS(f.bot));
+  const r = regRange(f, 'lr');
+  if (r.conds.length) {
+    // зарегистрировались в боте за период (родитель / ученик — если выбран в фильтре «Telegram-бот»)
+    if (f.bot === 'parent' || f.bot === 'student') r.conds.push(`lr.relation = '${f.bot}'`);
+    where.push(`EXISTS (SELECT 1 FROM tg_links lr WHERE lr.student_client_id = s.client_id AND ${r.conds.join(' AND ')})`);
+    params.push(...r.params);
+  }
   return { sql: where.length ? `WHERE ${where.join(' AND ')}` : '', params };
 }
 
@@ -211,7 +231,7 @@ const inBranches = (ids) => (r) => ids === null || r.branchIds.some((id) => ids.
 
 async function unregisteredWhere(role, f, who) {
   const ids = await effectiveBranches(role, f);
-  const w = buildWhere({ ...f, q: '', bot: '', branches: ids ?? [] });
+  const w = buildWhere({ ...f, q: '', bot: '', regFrom: '', regTo: '', branches: ids ?? [] });
   const conds = [w.sql.replace(/^WHERE /, ''), UNREG[who]].filter(Boolean);
   if (ids && !ids.length) conds.push('0 = 1'); // у ментора нет ни одного филиала
   return { sql: `WHERE ${conds.join(' AND ')}`, params: w.params };
@@ -248,6 +268,9 @@ function recipientsQuery(f, audience, select) {
   const conds = w.sql ? [w.sql.slice('WHERE '.length)] : [];
   const params = [...w.params];
   conds.push('u.is_subscribed = 1', 'u.is_blocked = 0');
+  const r = regRange(f);
+  conds.push(...r.conds);
+  params.push(...r.params);
   if (audience === 'parents') conds.push("l.relation = 'parent'");
   if (audience === 'students') conds.push("l.relation = 'student'");
   if (config.allowedStatuses.length) { conds.push('s.status IN (?)'); params.push(config.allowedStatuses); }
@@ -290,6 +313,7 @@ async function filterTitle(f) {
     parts.push(`филиал: ${rows.map((r) => r.name).join(', ') || f.branches.join(', ')}`);
   }
   if (f.q) parts.push(`поиск: ${f.q}`);
+  if (f.regFrom || f.regTo) parts.push(`регистрация в боте: ${f.regFrom || '…'} — ${f.regTo || '…'}`);
   return parts.join('; ') || 'все ученики';
 }
 
@@ -372,18 +396,20 @@ export function startWebServer(bot = null) {
       : [];
     const tgs = ids.length
       ? await query(
-          `SELECT l.student_client_id, l.relation, u.chat_id, u.username, u.first_name, u.is_blocked, u.is_subscribed, u.lang
+          `SELECT l.student_client_id, l.relation, DATE_FORMAT(l.created_at, '%d.%m.%Y %H:%i') AS reg_at, u.chat_id, u.username, u.first_name, u.is_blocked, u.is_subscribed, u.lang
            FROM tg_links l JOIN tg_users u ON u.id = l.tg_user_id WHERE l.student_client_id IN (?)`,
           [ids],
         )
       : [];
 
     // сколько аккаунтов Telegram зарегистрировалось как родитель / ученик среди учеников по фильтру
+    const rr = regRange(f);
+    const regSql = [w.sql.replace(/^WHERE /, ''), ...rr.conds].filter(Boolean).join(' AND ');
     const [reg] = await query(
       `SELECT COUNT(DISTINCT IF(l.relation = 'parent', l.tg_user_id, NULL)) AS parents,
               COUNT(DISTINCT IF(l.relation = 'student', l.tg_user_id, NULL)) AS students
-       FROM students s JOIN tg_links l ON l.student_client_id = s.client_id ${w.sql}`,
-      w.params,
+       FROM students s JOIN tg_links l ON l.student_client_id = s.client_id ${regSql ? `WHERE ${regSql}` : ''}`,
+      [...w.params, ...rr.params],
     );
 
     const [st] = await query(
@@ -412,14 +438,15 @@ export function startWebServer(bot = null) {
               ${BRANCHES_SUB} AS branches,
               (SELECT GROUP_CONCAT(CONCAT_WS(' ', a.last_name, a.first_name, COALESCE(a.mobile, a.phone, '')) SEPARATOR '; ')
                  FROM agents a WHERE a.student_client_id = s.client_id) AS parents,
-              ${BOT_COUNT_SUB} AS bot_users
+              ${BOT_COUNT_SUB} AS bot_users,
+              (SELECT DATE_FORMAT(MIN(l.created_at), '%d.%m.%Y %H:%i') FROM tg_links l WHERE l.student_client_id = s.client_id) AS reg_at
        FROM students s ${w.sql} ORDER BY s.last_name, s.first_name LIMIT 100000`,
       w.params,
     );
     await sendXlsx(res, 'students.xlsx', 'Ученики',
       [COL.hh, { header: 'ClientId', width: 10 }, { header: 'Фамилия', width: 18 }, { header: 'Имя', width: 16 }, { header: 'Отчество', width: 16 },
-        COL.status, COL.phone, COL.branch, COL.parents, { header: 'Подключено в боте', width: 12 }],
-      rows.map((r) => [r.hh_id, r.client_id, r.last_name, r.first_name, r.middle_name, r.status, r.mobile || r.phone, r.branches, r.parents, Number(r.bot_users)]));
+        COL.status, COL.phone, COL.branch, COL.parents, { header: 'Подключено в боте', width: 12 }, { header: 'Первая регистрация в боте', width: 18 }],
+      rows.map((r) => [r.hh_id, r.client_id, r.last_name, r.first_name, r.middle_name, r.status, r.mobile || r.phone, r.branches, r.parents, Number(r.bot_users), r.reg_at]));
   }));
 
   app.get('/broadcast', requireAuth, wrap(async (req, res) => {

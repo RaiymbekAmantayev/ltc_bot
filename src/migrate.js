@@ -24,6 +24,15 @@ export async function migrate() {
     );
     if (!ucols.some((r) => r.c === 'lang')) await conn.query('ALTER TABLE tg_users ADD COLUMN lang VARCHAR(5) NULL');
 
+    // время регистрации привязки; для старых записей точного времени нет — берём дату первого запуска бота пользователем
+    const [lcols] = await conn.query(
+      "SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tg_links'",
+    );
+    if (!lcols.some((r) => r.c === 'created_at')) {
+      await conn.query('ALTER TABLE tg_links ADD COLUMN created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, ADD KEY idx_link_created (created_at)');
+      await conn.query('UPDATE tg_links l JOIN tg_users u ON u.id = l.tg_user_id SET l.created_at = u.created_at');
+    }
+
     // отдельное сообщение на каждого ученика: broadcast_recipients теперь уникальна по (рассылка, чат, ученик)
     const [rcols] = await conn.query(
       "SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'broadcast_recipients'",
