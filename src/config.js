@@ -56,6 +56,13 @@ export const config = {
     scheduleField: process.env.MENTOR_SCHEDULE_FIELD || 'РАСПИСАНИЕ',
     timeField: process.env.MENTOR_TIME_FIELD || 'ВРЕМЯ ЗАНЯТИЙ',
   },
+  // коины (/coins): ментор входит по ID сотрудника HolliHop и видит учеников, где он ответственный (Assignees);
+  // руководители менторов видят всех, весь журнал и ведут список товаров
+  coins: {
+    field: process.env.COINS_FIELD || 'Коины',
+    headIds: list(process.env.COINS_HEAD_IDS || '3718,3795').map(Number).filter(Number.isFinite),
+    defaultPassword: process.env.COINS_DEFAULT_PASSWORD || '12345', // пароль при первом входе, пока ментор не сменит свой
+  },
   // «Мои звонки» — для выгрузки «14+» (звонки ученикам и родителям)
   moizvonki: {
     url: process.env.MOIZVONKI_URL || '',

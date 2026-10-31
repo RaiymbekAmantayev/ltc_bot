@@ -33,6 +33,15 @@ export async function migrate() {
       await conn.query('UPDATE tg_links l JOIN tg_users u ON u.id = l.tg_user_id SET l.created_at = u.created_at');
     }
 
+    // коины ученика; после добавления колонки следующая синхронизация будет полной, чтобы заполнить коины и ответственных
+    const [scols] = await conn.query(
+      "SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'students'",
+    );
+    if (!scols.some((r) => r.c === 'coins')) {
+      await conn.query('ALTER TABLE students ADD COLUMN coins DECIMAL(12,2) NULL AFTER email');
+      await conn.query("DELETE FROM sync_state WHERE k = 'students_last_now'");
+    }
+
     // отдельное сообщение на каждого ученика: broadcast_recipients теперь уникальна по (рассылка, чат, ученик)
     const [rcols] = await conn.query(
       "SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'broadcast_recipients'",

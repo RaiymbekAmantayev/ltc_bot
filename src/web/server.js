@@ -9,6 +9,8 @@ import { createBroadcast, cancelBroadcast, startWorker } from '../services/broad
 import { toRecipients, ROW_COLUMNS } from '../services/recipients.js';
 import { getDataCheck, getNotAttending, getAdaptation, getNoCalls, getDailyCalls, PROBLEMS } from '../services/hhReports.js';
 import { isMoiZvonkiConfigured } from '../moizvonki/client.js';
+import { toDbTime, astanaFmt } from '../utils/astana.js';
+import { registerCoins } from './coins.js';
 export const startWeb = startWebServer;
 const PER_PAGE = 50;
 const SESSION_TTL = 12 * 60 * 60 * 1000;
@@ -96,15 +98,6 @@ const setSession = (res, cookie, role) =>
   res.cookie(cookie, makeToken(role), { httpOnly: true, sameSite: 'strict', secure: config.web.secureCookie, maxAge: SESSION_TTL });
 
 const asArray = (v) => (v === undefined || v === null ? [] : [].concat(v));
-
-/**
- * Время регистрации в боте показываем и фильтруем по Астане (UTC+5).
- * created_at пишется в часовом поясе сессии MySQL; DB_SHIFT — на сколько секунд он отличается от Астаны.
- */
-const ASTANA_SEC = 5 * 3600;
-const DB_SHIFT = `(TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), NOW()) - ${ASTANA_SEC})`;
-const toDbTime = (expr) => `DATE_ADD(${expr}, INTERVAL ${DB_SHIFT} SECOND)`;
-const astanaFmt = (col) => `DATE_FORMAT(DATE_SUB(${col}, INTERVAL ${DB_SHIFT} SECOND), '%d.%m.%Y %H:%i')`;
 
 /** 'YYYY-MM-DD' или 'YYYY-MM-DDTHH:MM' → 'YYYY-MM-DDTHH:MM'; без времени — начало (или конец) дня. */
 function parseDateTime(v, endOfDay = false) {
@@ -397,7 +390,7 @@ export function startWebServer(bot = null) {
 
     const [{ n: total }] = await query(`SELECT COUNT(*) AS n FROM students s ${w.sql}`, w.params);
     const rows = await query(
-      `SELECT s.client_id, s.hh_id, s.first_name, s.last_name, s.middle_name, s.status, s.mobile, s.phone, s.email,
+      `SELECT s.client_id, s.hh_id, s.first_name, s.last_name, s.middle_name, s.status, s.mobile, s.phone, s.email, s.coins,
               ${BRANCHES_SUB} AS branches, ${BOT_COUNT_SUB} AS bot_users
        FROM students s ${w.sql}
        ORDER BY s.last_name, s.first_name, s.client_id
@@ -449,7 +442,7 @@ export function startWebServer(bot = null) {
     const f = parseFilters(req.query);
     const w = buildWhere(f);
     const rows = await query(
-      `SELECT s.hh_id, s.client_id, s.last_name, s.first_name, s.middle_name, s.status, s.mobile, s.phone,
+      `SELECT s.hh_id, s.client_id, s.last_name, s.first_name, s.middle_name, s.status, s.mobile, s.phone, s.coins,
               ${BRANCHES_SUB} AS branches,
               (SELECT GROUP_CONCAT(CONCAT_WS(' ', a.last_name, a.first_name, COALESCE(a.mobile, a.phone, '')) SEPARATOR '; ')
                  FROM agents a WHERE a.student_client_id = s.client_id) AS parents,
@@ -460,8 +453,8 @@ export function startWebServer(bot = null) {
     );
     await sendXlsx(res, 'students.xlsx', 'Ученики',
       [COL.hh, { header: 'ClientId', width: 10 }, { header: 'Фамилия', width: 18 }, { header: 'Имя', width: 16 }, { header: 'Отчество', width: 16 },
-        COL.status, COL.phone, COL.branch, COL.parents, { header: 'Подключено в боте', width: 12 }, { header: 'Первая регистрация в боте (Астана)', width: 18 }],
-      rows.map((r) => [r.hh_id, r.client_id, r.last_name, r.first_name, r.middle_name, r.status, r.mobile || r.phone, r.branches, r.parents, Number(r.bot_users), r.reg_at]));
+        COL.status, { header: 'Коины', width: 10 }, COL.phone, COL.branch, COL.parents, { header: 'Подключено в боте', width: 12 }, { header: 'Первая регистрация в боте (Астана)', width: 18 }],
+      rows.map((r) => [r.hh_id, r.client_id, r.last_name, r.first_name, r.middle_name, r.status, r.coins === null ? '' : Number(r.coins), r.mobile || r.phone, r.branches, r.parents, Number(r.bot_users), r.reg_at]));
   }));
 
   app.get('/broadcast', requireAuth, wrap(async (req, res) => {
@@ -650,6 +643,8 @@ export function startWebServer(bot = null) {
       [COL.hh, COL.name, COL.status, COL.branch, { header: 'Создан в HolliHop', width: 18 }, COL.groups, COL.phone, COL.parents],
       rows.filter(inBranches(ids)).map((r) => [r.hh_id, r.name, r.status, r.branches, r.created, r.groups, r.phone, r.parents]));
   }));
+
+  registerCoins(app, { sign, readCookie, tooManyAttempts, addAttempt, wrap, sendXlsx });
 
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {

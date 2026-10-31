@@ -44,7 +44,7 @@ textarea{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;
 .err{background:rgba(220,38,38,.1);color:var(--bad);padding:8px 10px;border-radius:8px;margin-bottom:12px}
 `;
 
-const layout = (title, body) =>
+export const layout = (title, body) =>
   `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><style>${CSS}</style></head><body>${body}</body></html>`;
 
 export function loginPage(error) {
@@ -138,6 +138,7 @@ export function dashboardPage({ f, stats, statuses, branches, rows, total, reg, 
 <h4>Telegram</h4>${tgHtml}
 </div></details></td>
 <td>${r.status ? `<span class="badge">${esc(r.status)}</span>` : '<span class="no">—</span>'}</td>
+<td style="white-space:nowrap">${r.coins === null ? '<span class="no">—</span>' : `🪙 ${Math.round(Number(r.coins) * 100) / 100}`}</td>
 <td>${esc(r.branches || '—')}</td>
 <td>${r.bot_users > 0 ? `<span class="ok">✅ ${r.bot_users}</span>` : '<span class="no">—</span>'}</td>
 </tr>`;
@@ -153,7 +154,7 @@ ${f.page < pages ? `<a class="btn2 sec" href="/${qs(f, { page: f.page + 1 })}">�
   return layout(
     'Админка — ученики',
     `<div class="hero"><div class="wrap"><div><h1>📣 Админка рассылок</h1><p>Ученики, филиалы и подключение к Telegram-боту</p></div>
-<div style="display:flex;gap:8px"><a class="btn" href="/broadcasts">Рассылки</a><a class="btn" href="/mentor">Выгрузки</a><a class="btn" href="/logout">Выйти</a></div></div></div>
+<div style="display:flex;gap:8px"><a class="btn" href="/broadcasts">Рассылки</a><a class="btn" href="/mentor">Выгрузки</a><a class="btn" href="/coins">Коины</a><a class="btn" href="/logout">Выйти</a></div></div></div>
 <div class="wrap">
 <div class="cards">
 <div class="card"><div class="n">${stats.students}</div><div class="l">учеников в базе</div></div>
@@ -174,8 +175,8 @@ ${branchMs}
 </form>
 <div class="bar"><span>Найдено: <b>${total}</b> · зарегистрировалось родителей: <b>${reg.parents}</b>, учеников: <b>${reg.students}</b></span><div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn2" href="/broadcast${qs(f)}">📣 Рассылка по фильтру</a><a class="btn2 sec" href="/export.xlsx${qs(f)}">⬇ Экспорт в Excel</a></div></div>
 <div class="card tw" style="padding:0"><table>
-<thead><tr><th>ID</th><th>ClientId</th><th>Ученик</th><th>Статус</th><th>Филиалы</th><th>В боте</th></tr></thead>
-<tbody>${body || '<tr><td colspan="6" class="no" style="text-align:center;padding:30px">Ничего не найдено</td></tr>'}</tbody></table></div>
+<thead><tr><th>ID</th><th>ClientId</th><th>Ученик</th><th>Статус</th><th>Коины</th><th>Филиалы</th><th>В боте</th></tr></thead>
+<tbody>${body || '<tr><td colspan="7" class="no" style="text-align:center;padding:30px">Ничего не найдено</td></tr>'}</tbody></table></div>
 ${pager}
 <div class="note">ID — это «Id» ученика в HolliHop, ClientId — «ClientId». Для регистрации в боте сейчас используется: <b>${regField === 'client_id' ? 'ClientId' : 'ID'}</b>. Поиск по числу ищет по обоим.</div>
 </div>`,
@@ -244,7 +245,7 @@ export function mentorPage({ f, who, unregistered, statuses, branches, title, ac
     .join('');
   const refresh = '<label class="chk"><input type="checkbox" name="refresh" value="1"><span>Обновить данные из HolliHop (не брать из кэша)</span></label>';
   const section = (icon, head, body) => `<div class="card" style="margin-bottom:16px"><h2 style="margin-top:0;font-size:18px">${icon} ${head}</h2>${body}</div>`;
-  const nav = '<a class="btn" href="/login">Админка</a>'; // вход в админку всегда по паролю администратора
+  const nav = '<a class="btn" href="/login">Админка</a><a class="btn" href="/coins">Коины</a>'; // вход в админку всегда по паролю администратора
   const active = esc(activeStatuses.join(', '));
 
   return layout(

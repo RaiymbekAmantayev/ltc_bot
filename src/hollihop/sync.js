@@ -3,6 +3,7 @@ import { query, withTx } from '../db.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { phoneKeys } from '../utils/phone.js';
+import { coinsOf } from '../services/coins.js';
 
 const toDt = (s) => (s ? String(s).replace('T', ' ').slice(0, 19) : null);
 const toDate = (s) => (s ? String(s).slice(0, 10) : null);
@@ -60,11 +61,12 @@ async function upsertStudents(list, runId) {
 
   const studentRows = list.map((s) => [
     s.ClientId, s.Id, nz(s.FirstName), nz(s.LastName), nz(s.MiddleName), toDate(s.Birthday), nz(s.Status),
-    nz(s.Mobile), nz(s.Phone), nz(s.EMail), toDt(s.Created), toDt(s.Updated), runId, now,
+    nz(s.Mobile), nz(s.Phone), nz(s.EMail), coinsOf(s), toDt(s.Created), toDt(s.Updated), runId, now,
   ]);
 
   const branchRows = [];
   const agentRows = [];
+  const assigneeRows = [];
   const contactSet = new Map();
   const addContacts = (clientId, owner, ...raws) => {
     for (const raw of raws) {
@@ -74,6 +76,7 @@ async function upsertStudents(list, runId) {
 
   for (const s of list) {
     for (const b of s.OfficesAndCompanies || []) branchRows.push([s.ClientId, b.Id]);
+    for (const a of s.Assignees || []) if (a.Id) assigneeRows.push([s.ClientId, a.Id, nz(a.FullName)]);
     addContacts(s.ClientId, 'student', s.Mobile, s.Phone);
     for (const a of s.Agents || []) {
       agentRows.push([
@@ -87,10 +90,10 @@ async function upsertStudents(list, runId) {
   await withTx(async (c) => {
     await c.query(
       `INSERT INTO students (client_id, hh_id, first_name, last_name, middle_name, birthday, status,
-         mobile, phone, email, hh_created, hh_updated, sync_run, synced_at) VALUES ?
+         mobile, phone, email, coins, hh_created, hh_updated, sync_run, synced_at) VALUES ?
        ON DUPLICATE KEY UPDATE hh_id = VALUES(hh_id), first_name = VALUES(first_name), last_name = VALUES(last_name),
          middle_name = VALUES(middle_name), birthday = VALUES(birthday), status = VALUES(status),
-         mobile = VALUES(mobile), phone = VALUES(phone), email = VALUES(email),
+         mobile = VALUES(mobile), phone = VALUES(phone), email = VALUES(email), coins = VALUES(coins),
          hh_created = VALUES(hh_created), hh_updated = VALUES(hh_updated),
          sync_run = VALUES(sync_run), synced_at = VALUES(synced_at)`,
       [studentRows],
@@ -98,8 +101,12 @@ async function upsertStudents(list, runId) {
     await c.query('DELETE FROM student_branches WHERE student_client_id IN (?)', [ids]);
     await c.query('DELETE FROM agents WHERE student_client_id IN (?)', [ids]);
     await c.query('DELETE FROM contacts WHERE student_client_id IN (?)', [ids]);
+    await c.query('DELETE FROM student_assignees WHERE student_client_id IN (?)', [ids]);
     if (branchRows.length) {
       await c.query('INSERT IGNORE INTO student_branches (student_client_id, branch_id) VALUES ?', [branchRows]);
+    }
+    if (assigneeRows.length) {
+      await c.query('INSERT IGNORE INTO student_assignees (student_client_id, employee_id, full_name) VALUES ?', [assigneeRows]);
     }
     if (agentRows.length) {
       await c.query(

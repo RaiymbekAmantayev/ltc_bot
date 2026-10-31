@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS students (
   mobile      VARCHAR(64)  NULL,
   phone       VARCHAR(64)  NULL,
   email       VARCHAR(255) NULL,
+  coins       DECIMAL(12,2) NULL,                  -- пользовательское поле «Коины» (COINS_FIELD)
   hh_created  DATETIME NULL,
   hh_updated  DATETIME NULL,
   sync_run    INT UNSIGNED NOT NULL DEFAULT 0,
@@ -37,6 +38,16 @@ CREATE TABLE IF NOT EXISTS student_branches (
   PRIMARY KEY (student_client_id, branch_id),
   KEY idx_branch (branch_id),
   CONSTRAINT fk_sb_student FOREIGN KEY (student_client_id) REFERENCES students (client_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Ответственные за ученика сотрудники HolliHop (Assignees) — по ним ментор видит «своих» учеников
+CREATE TABLE IF NOT EXISTS student_assignees (
+  student_client_id INT UNSIGNED NOT NULL,
+  employee_id       INT UNSIGNED NOT NULL,
+  full_name         VARCHAR(255) NULL,
+  PRIMARY KEY (student_client_id, employee_id),
+  KEY idx_assignee_employee (employee_id),
+  CONSTRAINT fk_sa_student FOREIGN KEY (student_client_id) REFERENCES students (client_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Родители / контактные лица (Agents)
@@ -142,4 +153,45 @@ CREATE TABLE IF NOT EXISTS broadcast_recipients (
 CREATE TABLE IF NOT EXISTS sync_state (
   k VARCHAR(64)  NOT NULL PRIMARY KEY,
   v VARCHAR(255) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Коины: входы менторов (логин = ID сотрудника в HolliHop)
+CREATE TABLE IF NOT EXISTS coin_accounts (
+  employee_id   INT UNSIGNED NOT NULL PRIMARY KEY,
+  full_name     VARCHAR(255) NULL,
+  password_hash VARCHAR(255) NOT NULL,           -- scrypt: salt:hash
+  created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Коины: товары, за которые списываются коины
+CREATE TABLE IF NOT EXISTS coin_products (
+  id          INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  name        VARCHAR(255) NOT NULL,
+  price       DECIMAL(12,2) NOT NULL,
+  is_active   TINYINT(1) NOT NULL DEFAULT 1,
+  created_by  INT UNSIGNED NULL,
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Коины: журнал действий (списания и изменения товаров); без внешних ключей — история не теряется при удалении ученика
+CREATE TABLE IF NOT EXISTS coin_log (
+  id                BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  action            VARCHAR(32) NOT NULL,          -- spend | product_add | product_edit
+  employee_id       INT UNSIGNED NOT NULL,
+  employee_name     VARCHAR(255) NULL,
+  student_client_id INT UNSIGNED NULL,
+  student_hh_id     INT UNSIGNED NULL,
+  student_name      VARCHAR(255) NULL,
+  product_id        INT UNSIGNED NULL,
+  product_name      VARCHAR(255) NULL,
+  price             DECIMAL(12,2) NULL,
+  coins_before      DECIMAL(12,2) NULL,
+  coins_after       DECIMAL(12,2) NULL,
+  note              VARCHAR(500) NULL,
+  KEY idx_cl_created (created_at),
+  KEY idx_cl_employee (employee_id),
+  KEY idx_cl_student (student_client_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
