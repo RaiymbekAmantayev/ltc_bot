@@ -541,19 +541,17 @@ export function startWebServer(bot = null) {
     const f = parseFilters(req.query);
     const w = await unregisteredWhere(req.role, f, parseUnreg(req.query));
     const rows = await query(
-      `SELECT s.hh_id, s.last_name, s.first_name, s.middle_name, s.status, s.mobile, s.phone,
+      `SELECT s.hh_id, s.last_name, s.first_name, s.middle_name, s.status,
               ${BRANCHES_SUB} AS branches,
-              (SELECT GROUP_CONCAT(CONCAT_WS(' ', a.last_name, a.first_name, COALESCE(a.mobile, a.phone, '')) SEPARATOR '; ')
-                 FROM agents a WHERE a.student_client_id = s.client_id) AS parents,
-              (SELECT GROUP_CONCAT(DISTINCT IF(l.relation = 'parent', 'родитель', 'ученик') SEPARATOR ', ')
-                 FROM tg_links l WHERE l.student_client_id = s.client_id) AS registered
+              (SELECT GROUP_CONCAT(sa.full_name ORDER BY sa.full_name SEPARATOR ', ')
+                 FROM student_assignees sa WHERE sa.student_client_id = s.client_id) AS mentors
        FROM students s ${w.sql} ORDER BY branches, s.last_name, s.first_name LIMIT 100000`,
       w.params,
     );
     await sendXlsx(res, 'ne-zaregistrirovany-v-bote.xlsx', 'Не в боте',
-      [COL.hh, COL.name, COL.status, COL.branch, COL.phone, COL.parents, { header: 'Уже зарегистрирован в боте', width: 20 }],
+      [COL.hh, COL.name, COL.status, COL.branch, { header: 'Ответственный (ментор)', width: 30 }],
       rows.map((r) => [r.hh_id, [r.last_name, r.first_name, r.middle_name].filter(Boolean).join(' '), r.status,
-        r.branches, r.mobile || r.phone, r.parents, r.registered || 'никто']));
+        r.branches, r.mentors || '']));
   }));
 
   app.get('/mentor/hh-check.xlsx', requireMentor, wrap(async (req, res) => {

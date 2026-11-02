@@ -85,7 +85,8 @@ export function qs(f, extra = {}) {
   if (f.regFrom) p.set('reg_from', f.regFrom);
   if (f.regTo) p.set('reg_to', f.regTo);
   for (const [k, v] of Object.entries(extra)) if (v !== '' && v !== undefined && v !== null) p.set(k, String(v));
-  const str = p.toString();
+  // для href: голый «&reg_from» браузер читает как сущность «®» и теряет фильтр
+  const str = p.toString().replaceAll('&', '&amp;');
   return str ? `?${str}` : '';
 }
 
@@ -262,7 +263,7 @@ ${branchMs(f.branches)}
 </form>
 <div class="bar"><span>Учеников в списке: <b>${unregistered}</b></span>
 <a class="btn2" href="/mentor/unregistered.xlsx${qs({ ...f, q: '', bot: '' }, { who })}">⬇ Скачать Excel</a></div>
-<p class="note" style="margin:0">ID HolliHop, ФИО, статус, филиал, телефон ученика, родители с телефонами и кто из них уже подключился к боту.</p>`)}
+<p class="note" style="margin:0">ID HolliHop, ФИО, статус, филиал и ответственный ментор.</p>`)}
 ${section('🚫', 'Не посещают', `
 <p class="note" style="margin:0 0 8px">Активные ученики (${active}), у которых за последние 7 дней нет ни одного результата теста категории
 «${esc(testCategory)}» — ни группового, ни персонального. В файле — дата последнего такого результата за 30 дней.</p>
