@@ -8,7 +8,8 @@ import { phoneKeys } from '../utils/phone.js';
  *  - проверка данных: нет фото, не заполнены пользовательские поля «расписание» / «время занятий»,
  *    расписание в поле не совпадает с расписанием групп ученика, ученик не в группе;
  *  - не посещает: за неделю нет ни одного результата теста категории «old daily» (групповые и персональные);
- *  - адаптация: ученики, созданные за последнюю неделю.
+ *  - адаптация: ученики, созданные за последнюю неделю;
+ *  - окончание договора: пользовательское поле «Дата окончания договора» попадает в выбранный период.
  * Данные кэшируются на 10 минут, чтобы менторы не упирались в лимиты HolliHop API.
  */
 export const PROBLEMS = {
@@ -191,6 +192,30 @@ export async function getAdaptation({ refresh = false } = {}) {
     .filter((s) => createdAt(s) >= since)
     .map((s) => ({ ...baseRow(s, groupsOf.get(s.ClientId) || []), created: fmt(createdAt(s)), createdTs: createdAt(s) }));
   return { rows: rows.sort((a, b) => b.createdTs - a.createdTs) };
+}
+
+// ---------- окончание договора ----------
+const CONTRACT_END_FIELD = 'Дата окончания договора';
+const STUDY_START_FIELD = 'Дата начала обучения';
+const ruDate = (d) => (d ? d.split('-').reverse().join('.') : '');
+
+/** Активные ученики, у которых пользовательское поле «Дата окончания договора» в периоде [from, to] (YYYY-MM-DD). */
+export async function getContractEnd({ from, to, refresh = false }) {
+  const { students, groupsOf } = await getActive({ refresh });
+  const rows = [];
+  for (const s of students) {
+    const ef = extraFields(s);
+    const end = day(ef.get(CONTRACT_END_FIELD.toLowerCase()));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(end) || end < from || end > to) continue;
+    rows.push({
+      ...baseRow(s, groupsOf.get(s.ClientId) || []),
+      mentor: (s.Assignees || []).map((a) => a.FullName).filter(Boolean).join(', '),
+      contractEnd: end,
+      contractEndRu: ruDate(end),
+      studyStart: ruDate(day(ef.get(STUDY_START_FIELD.toLowerCase()))),
+    });
+  }
+  return { rows: rows.sort((a, b) => a.contractEnd.localeCompare(b.contractEnd) || byBranchAndName(a, b)) };
 }
 
 // ---------- звонки «Мои звонки» по ученику ----------

@@ -7,7 +7,7 @@ import ExcelJS from 'exceljs';
 import { loginPage, mentorLoginPage, dashboardPage, errorPage, broadcastFormPage, broadcastsPage, mentorPage } from './views.js';
 import { createBroadcast, cancelBroadcast, startWorker } from '../services/broadcast.js';
 import { toRecipients, ROW_COLUMNS } from '../services/recipients.js';
-import { getDataCheck, getNotAttending, getAdaptation, getNoCalls, getDailyCalls, PROBLEMS } from '../services/hhReports.js';
+import { getDataCheck, getNotAttending, getAdaptation, getNoCalls, getDailyCalls, getContractEnd, PROBLEMS } from '../services/hhReports.js';
 import { isMoiZvonkiConfigured } from '../moizvonki/client.js';
 import { toDbTime, astanaFmt } from '../utils/astana.js';
 import { registerCoins } from './coins.js';
@@ -20,9 +20,11 @@ const SECRET = config.web.secret
   : crypto.createHash('sha256').update(`${config.botToken}:${config.web.password}`).digest();
 
 const sign = (v) => crypto.createHmac('sha256', SECRET).update(v).digest('base64url');
-// роль в сессии: admin — вся админка; almaty / astana — менторы, только выгрузки (/mentor) по своим филиалам
-const ROLES = ['admin', 'almaty', 'astana'];
-const MENTOR_TITLE = { almaty: 'Ментор Алматы', astana: 'Ментор Астана' };
+// роль в сессии: admin — вся админка; almaty / astana — менторы, только выгрузки (/mentor) по своим филиалам; op — выгрузки по всем филиалам
+const ROLES = ['admin', 'almaty', 'astana', 'op'];
+const MENTOR_TITLE = { almaty: 'Ментор Алматы', astana: 'Ментор Астана', op: 'ОП' };
+// выгрузки, доступные роли (нет в списке — все)
+const ROLE_REPORTS = { op: ['contract-end'] };
 const makeToken = (role) => {
   const payload = `${role}.${Date.now() + SESSION_TTL}`;
   return `${payload}.${sign(payload)}`;
@@ -50,7 +52,7 @@ function passwordEq(input, password) {
   const b = crypto.createHash('sha256').update(password).digest();
   return crypto.timingSafeEqual(a, b);
 }
-/** Ментор по логину и паролю: 'almaty' | 'astana' | null. */
+/** Ментор по логину и паролю: 'almaty' | 'astana' | 'op' | null. */
 function mentorByLogin(login, password) {
   const name = String(login ?? '').trim().toLowerCase();
   for (const [role, acc] of Object.entries(config.mentor.accounts)) {
@@ -85,14 +87,15 @@ function requireAuth(req, res, next) {
   if (tokenRole(readCookie(req, ADMIN_COOKIE)) === 'admin') return next();
   return res.redirect('/login');
 }
-/** Выгрузки — только под логином ментора; роль (almaty / astana) кладём в req.role. */
+/** Выгрузки — только под логином ментора; роль (almaty / astana / op) кладём в req.role. */
 function requireMentor(req, res, next) {
   const role = tokenRole(readCookie(req, MENTOR_COOKIE));
-  if (role && role !== 'admin') {
-    req.role = role;
-    return next();
-  }
-  return res.redirect('/mentor/login');
+  if (!role || role === 'admin') return res.redirect('/mentor/login');
+  const allowed = ROLE_REPORTS[role];
+  const report = req.path.match(/^\/mentor\/([\w-]+)\.xlsx$/)?.[1];
+  if (allowed && report && !allowed.includes(report)) return res.status(403).send(errorPage('Эта выгрузка вам недоступна.'));
+  req.role = role;
+  return next();
 }
 const setSession = (res, cookie, role) =>
   res.cookie(cookie, makeToken(role), { httpOnly: true, sameSite: 'strict', secure: config.web.secureCookie, maxAge: SESSION_TTL });
@@ -221,10 +224,10 @@ const UNREG = {
 const parseUnreg = (q) => (Object.hasOwn(UNREG, q.who) ? q.who : 'none');
 const parseProblems = (q) => [...new Set(asArray(q.problem).map(String).filter((x) => Object.hasOwn(PROBLEMS, x)))];
 
-/** Филиалы, доступные роли: админ — все, ментор Алматы — MENTOR_ALMATY_BRANCHES, ментор Астаны — остальные. */
+/** Филиалы, доступные роли: админ и ОП — все, ментор Алматы — MENTOR_ALMATY_BRANCHES, ментор Астаны — остальные. */
 async function scopeBranches(role) {
   const all = await query('SELECT id, name FROM branches WHERE is_active = 1 ORDER BY name');
-  if (role === 'admin') return all;
+  if (role === 'admin' || role === 'op') return all;
   const almaty = new Set(config.mentor.almatyBranches.map((x) => x.toLowerCase()));
   return all.filter((b) => almaty.has(b.name.trim().toLowerCase()) === (role === 'almaty'));
 }
@@ -233,7 +236,7 @@ async function effectiveBranches(role, f) {
   const ids = (await scopeBranches(role)).map((b) => b.id);
   const chosen = f.branches.filter((id) => ids.includes(id));
   if (chosen.length) return chosen;
-  return role === 'admin' ? null : ids;
+  return role === 'admin' || role === 'op' ? null : ids; // null — без ограничения, в т.ч. ученики без филиала
 }
 const inBranches = (ids) => (r) => ids === null || r.branchIds.some((id) => ids.includes(id));
 
@@ -534,6 +537,7 @@ export function startWebServer(bot = null) {
       fields: [config.mentor.scheduleField, config.mentor.timeField],
       testCategory: config.mentor.attendanceTestCategory,
       today: new Date().toLocaleDateString('sv-SE', { timeZone: config.sync.timezone }),
+      reports: ROLE_REPORTS[req.role] ?? null,
     }));
   }));
 
@@ -640,6 +644,20 @@ export function startWebServer(bot = null) {
     await sendXlsx(res, 'adaptaciya.xlsx', 'Адаптация',
       [COL.hh, COL.name, COL.status, COL.branch, { header: 'Создан в HolliHop', width: 18 }, COL.groups, COL.phone, COL.parents],
       rows.filter(inBranches(ids)).map((r) => [r.hh_id, r.name, r.status, r.branches, r.created, r.groups, r.phone, r.parents]));
+  }));
+
+  app.get('/mentor/contract-end.xlsx', requireMentor, wrap(async (req, res) => {
+    const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v ?? ''));
+    const { from, to } = req.query;
+    if (!isDate(from) || !isDate(to) || from > to) return res.status(400).send(errorPage('Укажите период: дату «с» и дату «по».'));
+    const f = parseFilters(req.query);
+    const ids = await effectiveBranches(req.role, f);
+    const { rows } = await getContractEnd({ from, to, refresh: req.query.refresh === '1' });
+    await sendXlsx(res, `okonchanie-dogovora-${from}-${to}.xlsx`, 'Окончание договора',
+      [COL.hh, COL.name, COL.status, COL.branch, { header: 'Дата окончания договора', width: 14 }, { header: 'Дата начала обучения', width: 14 },
+        { header: 'Ментор', width: 24 }, COL.groups, COL.phone, COL.parents],
+      rows.filter(inBranches(ids)).map((r) => [r.hh_id, r.name, r.status, r.branches, r.contractEndRu, r.studyStart,
+        r.mentor, r.groups, r.phone, r.parents]));
   }));
 
   registerCoins(app, { sign, readCookie, tooManyAttempts, addAttempt, wrap, sendXlsx });

@@ -44,11 +44,12 @@ export const config = {
     secureCookie: process.env.ADMIN_WEB_SECURE_COOKIE === '1',
   },
   // страница выгрузок для менторов (/mentor): свои логины, без доступа к рассылкам.
-  // Ментор Алматы видит только филиалы MENTOR_ALMATY_BRANCHES, ментор Астаны — все остальные.
+  // Ментор Алматы видит только филиалы MENTOR_ALMATY_BRANCHES, ментор Астаны — все остальные, ОП — все филиалы.
   mentor: {
     accounts: {
       almaty: { login: process.env.MENTOR_ALMATY_LOGIN || 'almaty', password: process.env.MENTOR_ALMATY_PASSWORD || '' },
       astana: { login: process.env.MENTOR_ASTANA_LOGIN || 'astana', password: process.env.MENTOR_ASTANA_PASSWORD || '' },
+      op: { login: process.env.MENTOR_OP_LOGIN || 'op', password: process.env.MENTOR_OP_PASSWORD || '' },
     },
     almatyBranches: list(process.env.MENTOR_ALMATY_BRANCHES || 'Сейфуллина'),
     attendanceTestCategory: process.env.MENTOR_ATTENDANCE_TEST_CATEGORY || 'old daily',

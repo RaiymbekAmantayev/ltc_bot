@@ -230,7 +230,7 @@ const PROBLEM_LABELS = {
   nogroup: 'Не состоит ни в одной группе',
 };
 
-export function mentorPage({ f, who, unregistered, statuses, branches, title, activeStatuses, fields, testCategory, today }) {
+export function mentorPage({ f, who, unregistered, statuses, branches, title, activeStatuses, fields, testCategory, today, reports = null }) {
   const statusMs = multiSelect(
     'status', 'Статус',
     statuses.map((x) => ({ value: x.status ?? '__none__', label: `${x.status ?? 'Без статуса'} (${x.n})` })),
@@ -245,7 +245,8 @@ export function mentorPage({ f, who, unregistered, statuses, branches, title, ac
     .map(([v, l]) => `<label class="chk"><input type="checkbox" name="problem" value="${v}"><span>${esc(l)}</span></label>`)
     .join('');
   const refresh = '<label class="chk"><input type="checkbox" name="refresh" value="1"><span>Обновить данные из HolliHop (не брать из кэша)</span></label>';
-  const section = (icon, head, body) => `<div class="card" style="margin-bottom:16px"><h2 style="margin-top:0;font-size:18px">${icon} ${head}</h2>${body}</div>`;
+  // reports — какие выгрузки показать (null — все)
+  const section = (key, icon, head, body) => (reports && !reports.includes(key) ? '' : `<div class="card" style="margin-bottom:16px"><h2 style="margin-top:0;font-size:18px">${icon} ${head}</h2>${body}</div>`);
   const nav = '<a class="btn" href="/login">Админка</a><a class="btn" href="/coins">Коины</a>'; // вход в админку всегда по паролю администратора
   const active = esc(activeStatuses.join(', '));
 
@@ -254,7 +255,7 @@ export function mentorPage({ f, who, unregistered, statuses, branches, title, ac
     `<div class="hero"><div class="wrap"><div><h1>📋 Выгрузки</h1><p>${esc(title)} · филиалы: ${esc(branches.map((b) => b.name).join(', ') || 'нет')}</p></div>
 <div style="display:flex;gap:8px">${nav}<a class="btn" href="/mentor/logout">Выйти</a></div></div></div>
 <div class="wrap" style="margin-top:-40px;max-width:900px">
-${section('🤖', 'Не зарегистрированы в Telegram-боте', `
+${section('unregistered', '🤖', 'Не зарегистрированы в Telegram-боте', `
 <form class="filters" method="get" action="/mentor" style="margin-top:0">
 ${statusMs}
 ${branchMs(f.branches)}
@@ -264,11 +265,11 @@ ${branchMs(f.branches)}
 <div class="bar"><span>Учеников в списке: <b>${unregistered}</b></span>
 <a class="btn2" href="/mentor/unregistered.xlsx${qs({ ...f, q: '', bot: '' }, { who })}">⬇ Скачать Excel</a></div>
 <p class="note" style="margin:0">ID HolliHop, ФИО, статус, филиал и ответственный ментор.</p>`)}
-${section('🚫', 'Не посещают', `
+${section('not-attending', '🚫', 'Не посещают', `
 <p class="note" style="margin:0 0 8px">Активные ученики (${active}), у которых за последние 7 дней нет ни одного результата теста категории
 «${esc(testCategory)}» — ни группового, ни персонального. В файле — дата последнего такого результата за 30 дней.</p>
 <form method="get" action="/mentor/not-attending.xlsx">${branchMs()}${refresh}<button>⬇ Скачать Excel</button></form>`)}
-${section('📅', 'Ежедневная (план обзвона)', `
+${section('daily', '📅', 'Ежедневная (план обзвона)', `
 <p class="note" style="margin:0 0 8px">Активные ученики, у которых в HolliHop поле «День обзвона постоянное» равно выбранному дню.
 Файл из двух листов: <b>Сводка</b> — запланировано / «Статус звонка» = Дозвон / фактически был разговор больше 90 секунд по «Мои звонки»
 (номер ученика или родителей) за выбранную дату, всего и по каждому ментору; <b>Ученики</b> — список.</p>
@@ -279,15 +280,24 @@ ${section('📅', 'Ежедневная (план обзвона)', `
 ${branchMs()}
 </div>
 ${refresh}<button>⬇ Скачать Excel</button></form>`)}
-${section('📞', '14+ (нет звонков за 2 недели)', `
+${section('no-calls', '📞', '14+ (нет звонков за 2 недели)', `
 <p class="note" style="margin:0 0 8px">Активные ученики (${active}), с которыми за последние 14 дней по «Мои звонки» не было разговора от 90 секунд —
 ни на номер ученика, ни на номера родителей (звонков не было вовсе или все короче 90 сек).
 Колонки: ID, ФИО, статус, моб. телефон, ментор, «День обзвона постоянное», «Статус звонка».</p>
 <form method="get" action="/mentor/no-calls.xlsx">${branchMs()}${refresh}<button>⬇ Скачать Excel</button></form>`)}
-${section('🌱', 'Адаптация', `
+${section('adaptation', '🌱', 'Адаптация', `
 <p class="note" style="margin:0 0 8px">Активные ученики (${active}), созданные в HolliHop за последние 7 дней.</p>
 <form method="get" action="/mentor/adaptation.xlsx">${branchMs()}${refresh}<button>⬇ Скачать Excel</button></form>`)}
-${section('🗂', 'Проверка данных в HolliHop', `
+${section('contract-end', '📄', 'Окончание договора', `
+<p class="note" style="margin:0 0 8px">Активные ученики (${active}), у которых в HolliHop поле «Дата окончания договора» попадает в выбранный период (включительно).</p>
+<form method="get" action="/mentor/contract-end.xlsx">
+<div class="filters" style="margin:0">
+<div><label>С</label><input type="date" name="from" value="${esc(today)}" required></div>
+<div><label>По</label><input type="date" name="to" value="${esc(today)}" required></div>
+${branchMs()}
+</div>
+${refresh}<button>⬇ Скачать Excel</button></form>`)}
+${section('hh-check', '🗂', 'Проверка данных в HolliHop', `
 <p class="note" style="margin:0 0 8px">Активные ученики (${active}), у которых не хватает хотя бы одного из данных.
 Расписание и время берутся из пользовательских полей «${esc(fields[0])}» и «${esc(fields[1])}» и сравниваются с текущим расписанием групп ученика
 (время совпадает, если начало отличается не больше чем на 10 минут).</p>
@@ -298,7 +308,7 @@ ${problemChecks}
 ${refresh}
 <button>⬇ Скачать Excel</button>
 </form>`)}
-<p class="note">Выгрузки «Не посещают», «Адаптация» и «Проверка данных» берут данные из HolliHop напрямую и кэшируются на 10 минут; первая выгрузка формируется до ~30 секунд.</p>
+${reports ? '' : `<p class="note">Выгрузки «Не посещают», «Адаптация», «Окончание договора» и «Проверка данных» берут данные из HolliHop напрямую и кэшируются на 10 минут; первая выгрузка формируется до ~30 секунд.</p>`}
 </div>`,
   );
 }
