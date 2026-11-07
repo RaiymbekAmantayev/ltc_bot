@@ -637,17 +637,20 @@ export function startWebServer(bot = null) {
     ]);
   }));
 
+  const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v ?? ''));
+
   app.get('/mentor/adaptation.xlsx', requireMentor, wrap(async (req, res) => {
+    const { from, to } = req.query;
+    if (!isDate(from) || !isDate(to) || from > to) return res.status(400).send(errorPage('Укажите период: дату «с» и дату «по».'));
     const f = parseFilters(req.query);
     const ids = await effectiveBranches(req.role, f);
-    const { rows } = await getAdaptation({ refresh: req.query.refresh === '1' });
-    await sendXlsx(res, 'adaptaciya.xlsx', 'Адаптация',
-      [COL.hh, COL.name, COL.status, COL.branch, { header: 'Создан в HolliHop', width: 18 }, COL.groups, COL.phone, COL.parents],
-      rows.filter(inBranches(ids)).map((r) => [r.hh_id, r.name, r.status, r.branches, r.created, r.groups, r.phone, r.parents]));
+    const { rows } = await getAdaptation({ from, to, refresh: req.query.refresh === '1' });
+    await sendXlsx(res, `adaptaciya-${from}-${to}.xlsx`, 'Адаптация',
+      [COL.hh, COL.name, COL.status, COL.branch, { header: 'Дата начала обучения', width: 14 }, COL.groups, COL.phone, COL.parents],
+      rows.filter(inBranches(ids)).map((r) => [r.hh_id, r.name, r.status, r.branches, r.studyStartRu, r.groups, r.phone, r.parents]));
   }));
 
   app.get('/mentor/contract-end.xlsx', requireMentor, wrap(async (req, res) => {
-    const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v ?? ''));
     const { from, to } = req.query;
     if (!isDate(from) || !isDate(to) || from > to) return res.status(400).send(errorPage('Укажите период: дату «с» и дату «по».'));
     const f = parseFilters(req.query);

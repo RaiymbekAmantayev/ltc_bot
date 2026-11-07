@@ -249,6 +249,7 @@ export function mentorPage({ f, who, unregistered, statuses, branches, title, ac
   const section = (key, icon, head, body) => (reports && !reports.includes(key) ? '' : `<div class="card" style="margin-bottom:16px"><h2 style="margin-top:0;font-size:18px">${icon} ${head}</h2>${body}</div>`);
   const nav = '<a class="btn" href="/login">Админка</a><a class="btn" href="/coins">Коины</a>'; // вход в админку всегда по паролю администратора
   const active = esc(activeStatuses.join(', '));
+  const weekAgo = new Date(Date.parse(today) - 7 * 86_400_000).toISOString().slice(0, 10);
 
   return layout(
     'Выгрузки',
@@ -286,8 +287,14 @@ ${section('no-calls', '📞', '14+ (нет звонков за 2 недели)',
 Колонки: ID, ФИО, статус, моб. телефон, ментор, «День обзвона постоянное», «Статус звонка».</p>
 <form method="get" action="/mentor/no-calls.xlsx">${branchMs()}${refresh}<button>⬇ Скачать Excel</button></form>`)}
 ${section('adaptation', '🌱', 'Адаптация', `
-<p class="note" style="margin:0 0 8px">Активные ученики (${active}), созданные в HolliHop за последние 7 дней.</p>
-<form method="get" action="/mentor/adaptation.xlsx">${branchMs()}${refresh}<button>⬇ Скачать Excel</button></form>`)}
+<p class="note" style="margin:0 0 8px">Активные ученики (${active}), у которых в HolliHop поле «Дата начала обучения» попадает в выбранный период (включительно).</p>
+<form method="get" action="/mentor/adaptation.xlsx">
+<div class="filters" style="margin:0">
+<div><label>С</label><input type="date" name="from" value="${esc(weekAgo)}" required></div>
+<div><label>По</label><input type="date" name="to" value="${esc(today)}" required></div>
+${branchMs()}
+</div>
+${refresh}<button>⬇ Скачать Excel</button></form>`)}
 ${section('contract-end', '📄', 'Окончание договора', `
 <p class="note" style="margin:0 0 8px">Активные ученики (${active}), у которых в HolliHop поле «Дата окончания договора» попадает в выбранный период (включительно).</p>
 <form method="get" action="/mentor/contract-end.xlsx">
