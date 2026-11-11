@@ -663,7 +663,7 @@ export function startWebServer(bot = null) {
         r.mentor, r.groups, r.phone, r.parents]));
   }));
 
-  registerCoins(app, { sign, readCookie, tooManyAttempts, addAttempt, wrap, sendXlsx });
+  registerCoins(app, { sign, readCookie, tooManyAttempts, addAttempt, wrap, sendXlsx, bot });
 
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {

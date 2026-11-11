@@ -223,8 +223,8 @@ export async function getContractEnd({ from, to, refresh = false }) {
 // ---------- звонки «Мои звонки» по ученику ----------
 const CALLS_DAYS = 14;
 const MIN_CALL_SEC = 90;
-const CALL_DAY_FIELD = 'День обзвона постоянное';
-const CALL_STATUS_FIELD = 'Статус звонка';
+const CALL_DAY_FIELD = config.mentor.callDayField;
+const CALL_STATUS_FIELD = config.mentor.callStatusField;
 
 const fmtCallTime = (ts) =>
   new Date(ts * 1000).toLocaleString('ru-RU', { timeZone: config.sync.timezone, day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });

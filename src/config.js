@@ -56,6 +56,15 @@ export const config = {
     activeStatuses: list(process.env.MENTOR_ACTIVE_STATUSES || 'Занимается,Регистрация,Заморозка'),
     scheduleField: process.env.MENTOR_SCHEDULE_FIELD || 'РАСПИСАНИЕ',
     timeField: process.env.MENTOR_TIME_FIELD || 'ВРЕМЯ ЗАНЯТИЙ',
+    callDayField: process.env.MENTOR_CALL_DAY_FIELD || 'День обзвона постоянное',
+    callStatusField: process.env.MENTOR_CALL_STATUS_FIELD || 'Статус звонка',
+  },
+  // LTC API для раздела «Кураторы → Пропуски»: GET /integration-api/absences и POST /integration-api/absence-feedback
+  ltc: {
+    url: (process.env.LTC_API_URL || '').replace(/\/+$/, ''),
+    key: process.env.INTEGRATION_KEY || '',
+    absenceStatuses: list(process.env.ABSENCE_STATUSES || 'Связались,Не дозвонились,Перезвонить,Рассылка ушла,Уважительная причина,Без уважительной причины'),
+    absenceReasons: list(process.env.ABSENCE_REASONS || 'Болел(а),Семейные обстоятельства,Работа / учёба,Поездка,Забыл(а),Технические проблемы'),
   },
   // коины (/coins): ментор входит по ID сотрудника HolliHop и видит учеников, где он ответственный (Assignees);
   // руководители менторов видят всех, весь журнал и ведут список товаров

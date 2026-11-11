@@ -155,7 +155,7 @@ ${f.page < pages ? `<a class="btn2 sec" href="/${qs(f, { page: f.page + 1 })}">�
   return layout(
     'Админка — ученики',
     `<div class="hero"><div class="wrap"><div><h1>📣 Админка рассылок</h1><p>Ученики, филиалы и подключение к Telegram-боту</p></div>
-<div style="display:flex;gap:8px"><a class="btn" href="/broadcasts">Рассылки</a><a class="btn" href="/mentor">Выгрузки</a><a class="btn" href="/coins">Коины</a><a class="btn" href="/logout">Выйти</a></div></div></div>
+<div style="display:flex;gap:8px"><a class="btn" href="/broadcasts">Рассылки</a><a class="btn" href="/mentor">Выгрузки</a><a class="btn" href="/coins">Кураторы</a><a class="btn" href="/logout">Выйти</a></div></div></div>
 <div class="wrap">
 <div class="cards">
 <div class="card"><div class="n">${stats.students}</div><div class="l">учеников в базе</div></div>
@@ -247,7 +247,7 @@ export function mentorPage({ f, who, unregistered, statuses, branches, title, ac
   const refresh = '<label class="chk"><input type="checkbox" name="refresh" value="1"><span>Обновить данные из HolliHop (не брать из кэша)</span></label>';
   // reports — какие выгрузки показать (null — все)
   const section = (key, icon, head, body) => (reports && !reports.includes(key) ? '' : `<div class="card" style="margin-bottom:16px"><h2 style="margin-top:0;font-size:18px">${icon} ${head}</h2>${body}</div>`);
-  const nav = '<a class="btn" href="/login">Админка</a><a class="btn" href="/coins">Коины</a>'; // вход в админку всегда по паролю администратора
+  const nav = '<a class="btn" href="/login">Админка</a><a class="btn" href="/coins">Кураторы</a>'; // вход в админку всегда по паролю администратора
   const active = esc(activeStatuses.join(', '));
   const weekAgo = new Date(Date.parse(today) - 7 * 86_400_000).toISOString().slice(0, 10);
 

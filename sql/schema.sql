@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS students (
   phone       VARCHAR(64)  NULL,
   email       VARCHAR(255) NULL,
   coins       DECIMAL(12,2) NULL,                  -- пользовательское поле «Коины» (COINS_FIELD)
+  call_status VARCHAR(128) NULL,                   -- пользовательское поле «Статус звонка»
+  call_day    VARCHAR(64)  NULL,                   -- пользовательское поле «День обзвона постоянное»
   hh_created  DATETIME NULL,
   hh_updated  DATETIME NULL,
   sync_run    INT UNSIGNED NOT NULL DEFAULT 0,
@@ -194,4 +196,19 @@ CREATE TABLE IF NOT EXISTS coin_log (
   KEY idx_cl_created (created_at),
   KEY idx_cl_employee (employee_id),
   KEY idx_cl_student (student_client_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Кураторы → Пропуски: сообщения в бот по ученику (какой рассылкой ушло, за какой период пропусков, кто отправил)
+CREATE TABLE IF NOT EXISTS absence_messages (
+  id                BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  broadcast_id      INT UNSIGNED NOT NULL,
+  student_client_id INT UNSIGNED NOT NULL,          -- ClientId HolliHop (= studentId в LTC)
+  period_from       DATE NOT NULL,
+  period_to         DATE NOT NULL,
+  audience          VARCHAR(16) NOT NULL,           -- all | parents | students
+  employee_id       INT UNSIGNED NOT NULL,
+  employee_name     VARCHAR(255) NULL,
+  created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_am_student (student_client_id, period_from, period_to),
+  KEY idx_am_broadcast (broadcast_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

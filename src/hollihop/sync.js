@@ -7,6 +7,11 @@ import { coinsOf } from '../services/coins.js';
 
 const toDt = (s) => (s ? String(s).replace('T', ' ').slice(0, 19) : null);
 const toDate = (s) => (s ? String(s).slice(0, 10) : null);
+/** Значение пользовательского поля HolliHop по названию (без учёта регистра); пусто — null. */
+const extraField = (s, name, max) => {
+  const v = (s.ExtraFields || []).find((f) => String(f.Name ?? '').trim().toLowerCase() === name.toLowerCase())?.Value;
+  return String(v ?? '').trim().slice(0, max) || null;
+};
 const nz = (v) => (v === undefined || v === null || v === '' ? null : v);
 
 // --- фильтр по статусам (RECIPIENT_STATUSES): в БД храним только учеников с этими статусами ---
@@ -61,7 +66,8 @@ async function upsertStudents(list, runId) {
 
   const studentRows = list.map((s) => [
     s.ClientId, s.Id, nz(s.FirstName), nz(s.LastName), nz(s.MiddleName), toDate(s.Birthday), nz(s.Status),
-    nz(s.Mobile), nz(s.Phone), nz(s.EMail), coinsOf(s), toDt(s.Created), toDt(s.Updated), runId, now,
+    nz(s.Mobile), nz(s.Phone), nz(s.EMail), coinsOf(s),
+    extraField(s, config.mentor.callStatusField, 128), extraField(s, config.mentor.callDayField, 64), toDt(s.Created), toDt(s.Updated), runId, now,
   ]);
 
   const branchRows = [];
@@ -90,10 +96,11 @@ async function upsertStudents(list, runId) {
   await withTx(async (c) => {
     await c.query(
       `INSERT INTO students (client_id, hh_id, first_name, last_name, middle_name, birthday, status,
-         mobile, phone, email, coins, hh_created, hh_updated, sync_run, synced_at) VALUES ?
+         mobile, phone, email, coins, call_status, call_day, hh_created, hh_updated, sync_run, synced_at) VALUES ?
        ON DUPLICATE KEY UPDATE hh_id = VALUES(hh_id), first_name = VALUES(first_name), last_name = VALUES(last_name),
          middle_name = VALUES(middle_name), birthday = VALUES(birthday), status = VALUES(status),
          mobile = VALUES(mobile), phone = VALUES(phone), email = VALUES(email), coins = VALUES(coins),
+         call_status = VALUES(call_status), call_day = VALUES(call_day),
          hh_created = VALUES(hh_created), hh_updated = VALUES(hh_updated),
          sync_run = VALUES(sync_run), synced_at = VALUES(synced_at)`,
       [studentRows],

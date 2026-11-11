@@ -41,6 +41,11 @@ export async function migrate() {
       await conn.query('ALTER TABLE students ADD COLUMN coins DECIMAL(12,2) NULL AFTER email');
       await conn.query("DELETE FROM sync_state WHERE k = 'students_last_now'");
     }
+    // статус звонка и день обзвона (для «Кураторы → Пропуски»); тоже заполняются полной синхронизацией
+    if (!scols.some((r) => r.c === 'call_status')) {
+      await conn.query('ALTER TABLE students ADD COLUMN call_status VARCHAR(128) NULL AFTER coins, ADD COLUMN call_day VARCHAR(64) NULL AFTER call_status');
+      await conn.query("DELETE FROM sync_state WHERE k = 'students_last_now'");
+    }
 
     // отдельное сообщение на каждого ученика: broadcast_recipients теперь уникальна по (рассылка, чат, ученик)
     const [rcols] = await conn.query(

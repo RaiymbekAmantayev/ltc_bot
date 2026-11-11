@@ -9,7 +9,8 @@
     "dev": "node --watch src/index.js",
     "migrate": "node src/migrate.js",
     "sync": "node src/scripts/sync-cli.js",
-    "sync:full": "node src/scripts/sync-cli.js full"
+    "sync:full": "node src/scripts/sync-cli.js full",
+    "test": "node --test"
   },
   "engines": {
     "node": ">=18.17"
