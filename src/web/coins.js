@@ -73,6 +73,7 @@ async function hhInfoByIds(ids) {
 
 const PER_PAGE = 50;
 const ABSENCES_PER_PAGE = 50;
+const EMPTY_CALL = '__empty'; // значение фильтра «Статус звонка: не заполнено»
 const ABSENCE_SORTS = { rate_desc: '% пропусков ↓', rate_asc: '% пропусков ↑', absent_desc: 'Пропусков ↓', name: 'ФИО' };
 /** Сегодня (YYYY-MM-DD) в часовом поясе школы. */
 const todayLocal = () => new Date().toLocaleDateString('sv-SE', { timeZone: config.sync.timezone });
@@ -332,7 +333,7 @@ export function registerCoins(app, { sign, readCookie, tooManyAttempts, addAttem
       periodSet: p.set,
       q: String(q.q || '').trim().slice(0, 100),
       mentor: user.isHead ? toId(q.mentor) : null,
-      fb: String(q.fb || '').slice(0, 64),
+      call: String(q.call || '').slice(0, 128), // статус звонка HolliHop; EMPTY_CALL — не заполнено
       day: String(q.day || '').slice(0, 64),
       sort: ABSENCE_SORTS[q.sort] ? q.sort : 'rate_desc',
     };
@@ -371,14 +372,19 @@ export function registerCoins(app, { sign, readCookie, tooManyAttempts, addAttem
     const rows = mine.filter((x) => {
       if (isNum && String(x.studentId) !== f.q && String(x.hh?.hh_id ?? '') !== f.q) return false;
       if (words.length && !words.every((w) => String(x.student || '').toLowerCase().includes(w))) return false;
-      if (f.fb === 'none' && x.feedback) return false;
-      if (f.fb === 'done' && !x.feedback) return false;
-      if (f.fb && f.fb !== 'none' && f.fb !== 'done' && x.feedback?.status !== f.fb) return false;
+      if (f.call === EMPTY_CALL && x.callStatus) return false;
+      if (f.call && f.call !== EMPTY_CALL && x.callStatus !== f.call) return false;
       return !f.day || x.callDay === f.day;
     });
     rows.sort(SORT_FN[f.sort]);
     const days = [...new Set(mine.map((x) => x.callDay).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru'));
     return { rows, total: mine.length, days };
+  }
+
+  /** Значения поля HolliHop «Статус звонка» (как в CRM): все, что встречаются у учеников, по частоте. */
+  async function callStatuses() {
+    const r = await query("SELECT call_status AS v FROM students WHERE call_status IS NOT NULL AND call_status <> '' GROUP BY call_status ORDER BY COUNT(*) DESC");
+    return r.map((x) => x.v);
   }
 
   async function renderAbsences(req, res, { ok = null, error = null, status = 200 } = {}) {
@@ -397,7 +403,7 @@ export function registerCoins(app, { sign, readCookie, tooManyAttempts, addAttem
     res.status(status).send(absencesPage({
       user, f, page: p, pages, shown: data.rows.length, total: data.total, days: data.days,
       rows: data.rows.slice((p - 1) * ABSENCES_PER_PAGE, p * ABSENCES_PER_PAGE),
-      mentors: user.isHead ? await mentorsList() : [], sorts: ABSENCE_SORTS,
+      mentors: user.isHead ? await mentorsList() : [], sorts: ABSENCE_SORTS, callStatuses: await callStatuses(), emptyCall: EMPTY_CALL,
       statuses: config.ltc.absenceStatuses, reasons: config.ltc.absenceReasons, reasonRequired: config.ltc.reasonRequiredStatuses,
       csrf: csrfOf(req), ok, error: error || loadError,
     }));

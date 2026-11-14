@@ -186,8 +186,8 @@ const options = (list, cur, empty) => `<option value="">${empty}</option>${[...n
  * «Кураторы → Пропуски»: ученики с пропусками из LTC, статус звонка и день обзвона из HolliHop,
  * статус и причина пропуска. Период общий: меняет только руководитель, остальные видят его только для чтения.
  */
-export function absencesPage({ user, f, rows, shown, total, page, pages, days, mentors, sorts, statuses, reasons, reasonRequired, csrf, ok, error }) {
-  const qp = { q: f.q, mentor: f.mentor, fb: f.fb, day: f.day, sort: f.sort }; // период в ссылках не нужен — он общий
+export function absencesPage({ user, f, rows, shown, total, page, pages, days, mentors, sorts, callStatuses = [], emptyCall = '__empty', statuses, reasons, reasonRequired, csrf, ok, error }) {
+  const qp = { q: f.q, mentor: f.mentor, call: f.call, day: f.day, sort: f.sort }; // период в ссылках не нужен — он общий
   const back = link('/coins/absences', { ...qp, page });
   const body = rows.map((r) => {
     const fb = r.feedback;
@@ -207,8 +207,8 @@ ${user.isHead ? `<td style="font-size:13px">${esc(r.hh?.assignees || '—')}</td
 ${fb ? `<div class="no" style="font-size:12px;margin-top:4px">${esc(fb.mentor || '')}${fb.mentor ? ' · ' : ''}${esc(r.feedbackAtText)}</div>` : ''}</td></tr>`;
   }).join('');
   const cols = user.isHead ? 7 : 6;
-  const fbOpts = [['', 'Все'], ['none', 'Без статуса'], ['done', 'Со статусом'], ...statuses.map((s) => [s, s])]
-    .map(([v, l]) => `<option value="${esc(v)}"${f.fb === v ? ' selected' : ''}>${esc(l)}</option>`).join('');
+  const callOpts = [['', 'Все'], [emptyCall, 'Не заполнено'], ...[...new Set([...callStatuses, ...(f.call && f.call !== emptyCall ? [f.call] : [])])].map((s) => [s, s])]
+    .map(([v, l]) => `<option value="${esc(v)}"${f.call === v ? ' selected' : ''}>${esc(l)}</option>`).join('');
   const dayOpts = `<option value="">Все</option>${days.map((d) => `<option${f.day === d ? ' selected' : ''}>${esc(d)}</option>`).join('')}`;
   const sortOpts = Object.entries(sorts).map(([v, l]) => `<option value="${v}"${f.sort === v ? ' selected' : ''}>${esc(l)}</option>`).join('');
   const periodText = `${fmtDay(f.from)} — ${fmtDay(f.to)}`;
@@ -231,7 +231,7 @@ ${period}
 <form class="filters" method="get" action="/coins/absences">
 <div><label>ID ученика или ФИО</label><input name="q" value="${esc(f.q)}" placeholder="например 1234 или Иванов"></div>
 ${user.isHead ? `<div><label>Куратор (ответственный)</label>${mentorSelect(mentors, f.mentor, 'Все ученики')}</div>` : ''}
-<div><label>Статус пропуска</label><select name="fb">${fbOpts}</select></div>
+<div><label>Статус звонка (HolliHop)</label><select name="call">${callOpts}</select></div>
 <div><label>День обзвона постоянное</label><select name="day">${dayOpts}</select></div>
 <div><label>Сортировка</label><select name="sort">${sortOpts}</select></div>
 <div style="display:flex;gap:8px"><button>Найти</button><a class="btn2 sec" href="/coins/absences">Сброс</a></div>
