@@ -63,8 +63,10 @@ export const config = {
   ltc: {
     url: (process.env.LTC_API_URL || '').replace(/\/+$/, ''),
     key: process.env.INTEGRATION_KEY || '',
-    absenceStatuses: list(process.env.ABSENCE_STATUSES || 'Связались,Не дозвонились,Перезвонить,Рассылка ушла,Уважительная причина,Без уважительной причины'),
+    absenceStatuses: list(process.env.ABSENCE_STATUSES || 'Дозвон,Недозвон,Перезвонить,Рассылка ушла,Уважительная причина,Без уважительной причины'),
     absenceReasons: list(process.env.ABSENCE_REASONS || 'Болел(а),Семейные обстоятельства,Работа / учёба,Поездка,Забыл(а),Технические проблемы'),
+    // для этих статусов причина пропуска обязательна
+    reasonRequiredStatuses: list(process.env.REASON_REQUIRED_STATUSES || 'Дозвон'),
   },
   // коины (/coins): ментор входит по ID сотрудника HolliHop и видит учеников, где он ответственный (Assignees);
   // руководители менторов видят всех, весь журнал и ведут список товаров

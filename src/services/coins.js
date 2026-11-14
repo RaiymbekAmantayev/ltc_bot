@@ -41,6 +41,24 @@ async function getEmployees() {
   return byId;
 }
 
+/**
+ * Сотрудник для первого входа. Обычно — из GetEmployees. Если ключу HolliHop запрещён этот метод
+ * («несанкционированная операция») или HolliHop недоступен — по своим данным: куратор, который
+ * «Ответственный» хотя бы у одного ученика (синхронизация), или руководитель из COINS_HEAD_IDS.
+ */
+async function findEmployee(id) {
+  try {
+    return (await getEmployees()).get(id) || null;
+  } catch (err) {
+    logger.warn({ id, err: err.message }, 'Коины: GetEmployees недоступен — проверяю сотрудника по ответственным за учеников');
+    const [a] = await query('SELECT MAX(full_name) AS name FROM student_assignees WHERE employee_id = ? HAVING COUNT(*) > 0', [id]);
+    if (a) return { id, name: a.name || `ID ${id}`, fired: false };
+    if (isHead(id)) return { id, name: `ID ${id}`, fired: false };
+    if (err.fromApi && !err.rateLimited) return null; // не куратор и не руководитель
+    throw new CoinsError('HolliHop сейчас недоступен — попробуйте войти чуть позже.');
+  }
+}
+
 async function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString('hex');
   const hash = await scrypt(String(password), salt, 32);
@@ -74,7 +92,7 @@ export async function loginCoins(login, password) {
   if (user) return (await checkPassword(password, user.pwd)) ? user : null;
 
   if (String(password) !== config.coins.defaultPassword) return null;
-  const emp = (await getEmployees()).get(id);
+  const emp = await findEmployee(id);
   if (!emp || emp.fired) return null;
   await query('INSERT IGNORE INTO coin_accounts (employee_id, full_name, password_hash) VALUES (?, ?, ?)', [id, emp.name, await hashPassword(password)]);
   return getCoinUser(id);
