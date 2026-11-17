@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import express from 'express';
+import multer from 'multer';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { query } from '../db.js';
@@ -316,6 +317,43 @@ async function broadcastCounts(f) {
   };
 }
 
+// файл к веб-рассылке: держим в памяти и один раз отправляем в Telegram (лимит Bot API на загрузку — 50 МБ)
+const MAX_FILE_MB = 50;
+const CAPTION_MAX = 1024;
+const uploadFile = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_FILE_MB * 1024 * 1024, files: 1, fields: 100, fieldSize: 20_000 },
+}).single('file');
+/** Разбирает multipart-форму; ошибку не бросает, а кладёт в req.uploadError, чтобы показать её в форме. */
+function parseUpload(req, res, next) {
+  uploadFile(req, res, (err) => {
+    if (err) {
+      req.uploadError = err.code === 'LIMIT_FILE_SIZE'
+        ? `Файл больше ${MAX_FILE_MB} МБ. Большое видео разошлите из Telegram-бота (/broadcast) или ссылкой.`
+        : `Не удалось принять файл: ${err.message}`;
+    }
+    // браузеры шлют имя файла в UTF-8, а multer читает его как latin1 — перекодируем
+    if (req.file?.originalname) {
+      const fixed = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
+      if (!fixed.includes('�')) req.file.originalname = fixed;
+    }
+    next();
+  });
+}
+
+/**
+ * Отправляет файл (с подписью) в чат администратора и возвращает это сообщение —
+ * дальше рассылка копирует его через copyMessage, файл повторно не загружается.
+ */
+function sendFileToChat(bot, chatId, file, caption, parseMode) {
+  const input = { source: file.buffer, filename: file.originalname || 'file' };
+  const extra = caption ? { caption, ...(parseMode ? { parse_mode: parseMode } : {}) } : {};
+  const mime = file.mimetype || '';
+  if (/^image\/(jpeg|png|webp)$/.test(mime) && file.size <= 10 * 1024 * 1024) return bot.telegram.sendPhoto(chatId, input, extra);
+  if (mime === 'video/mp4') return bot.telegram.sendVideo(chatId, input, { ...extra, supports_streaming: true });
+  return bot.telegram.sendDocument(chatId, input, extra);
+}
+
 async function filterTitle(f) {
   const parts = [];
   if (f.statuses.length) parts.push(`статус: ${f.statuses.map((x) => (x === '__none__' ? 'без статуса' : x)).join(', ')}`);
@@ -468,7 +506,7 @@ export function startWebServer(bot = null) {
     }));
   }));
 
-  app.post('/broadcast', requireAuth, wrap(async (req, res) => {
+  app.post('/broadcast', requireAuth, parseUpload, wrap(async (req, res) => {
     if (!csrfOk(req)) return res.status(403).send(errorPage('Сессия устарела — обновите страницу и повторите.'));
     if (!bot) return res.status(500).send(errorPage('Бот недоступен.'));
 
@@ -477,29 +515,59 @@ export function startWebServer(bot = null) {
     const audience = ['all', 'parents', 'students'].includes(req.body.audience) ? req.body.audience : 'all';
     const html = req.body.html === '1';
     const personalize = req.body.personalize === '1';
+    const file = req.file && req.file.size > 0 ? req.file : null;
     const title = await filterTitle(f);
     const fail = async (error) =>
       res.status(400).send(broadcastFormPage({
         f, title, counts: await broadcastCounts(f), csrf: csrfOf(req), error, text, audience, html, personalize, restricted: config.allowedStatuses,
       }));
 
-    if (!text) return fail('Введите текст сообщения.');
+    if (req.uploadError) return fail(req.uploadError);
+    if (!text && !file) return fail('Введите текст сообщения или прикрепите файл.');
+    if (file && text.length > CAPTION_MAX) return fail(`Подпись к файлу — не длиннее ${CAPTION_MAX} символов (ограничение Telegram). Сократите текст или отправьте его отдельной рассылкой.`);
     if (text.length > 3800) return fail('Текст длиннее 3800 символов (с учётом обращения к родителю).');
     if (req.body.confirm !== '1') return fail('Подтвердите отправку галочкой.');
 
+    const audLabel = { all: 'родители и ученики', parents: 'родители', students: 'ученики' }[audience];
+    const fullTitle = `${title} · ${audLabel}${file ? ` · 📎 ${file.originalname || 'файл'}` : ''}`;
+    const adminChat = config.adminIds[0];
+    if (file && !adminChat) return fail('Для рассылки файла укажите ADMIN_IDS в .env: файл сначала загружается в чат администратора.');
+
     // защита от двойной отправки (двойной клик, повторная отправка формы)
-    const [dup] = await query('SELECT id FROM broadcasts WHERE text = ? AND created_at > (NOW() - INTERVAL 1 MINUTE) LIMIT 1', [text]);
+    const [dup] = file
+      ? await query('SELECT id FROM broadcasts WHERE text IS NULL AND title = ? AND created_at > (NOW() - INTERVAL 1 MINUTE) LIMIT 1', [fullTitle.slice(0, 250)])
+      : await query('SELECT id FROM broadcasts WHERE text = ? AND created_at > (NOW() - INTERVAL 1 MINUTE) LIMIT 1', [text]);
     if (dup) return fail(`Такая рассылка уже создана минуту назад (#${dup.id}).`);
 
     const q = recipientsQuery(f, audience, `DISTINCT ${ROW_COLUMNS}`);
     const recipients = toRecipients(await query(q.sql, q.params), personalize);
     if (!recipients.length) return fail('По этому фильтру нет ни одного получателя в боте.');
 
-    const audLabel = { all: 'родители и ученики', parents: 'родители', students: 'ученики' }[audience];
+    let src = null;
+    if (file) {
+      // файл уходит в Telegram один раз — в чат администратора; рассылка копирует это сообщение (copyMessage)
+      try {
+        const msg = await sendFileToChat(bot, adminChat, file, text, html ? 'HTML' : null);
+        src = { chatId: adminChat, messageId: msg.message_id };
+      } catch (err) {
+        const code = err?.response?.error_code;
+        const desc = err?.response?.description || err.message || 'неизвестная ошибка';
+        logger.warn({ err: desc, code }, 'Не удалось загрузить файл рассылки в Telegram');
+        if (code === 403 || /chat not found/i.test(desc)) {
+          return fail('Бот не может написать администратору: откройте бота в Telegram под аккаунтом из ADMIN_IDS и нажмите /start.');
+        }
+        if (/can't parse entities|can't find end/i.test(desc)) return fail(`Telegram не принял HTML-разметку подписи: ${desc}`);
+        return fail(`Telegram не принял файл: ${desc}`);
+      }
+    }
+
     const { id } = await createBroadcast({
-      adminChatId: config.adminIds[0] ?? 0,
-      audience, recipients, text, parseMode: html ? 'HTML' : null,
-      title: `${title} · ${audLabel}`,
+      adminChatId: adminChat ?? 0,
+      audience, recipients,
+      ...(src
+        ? { srcChatId: src.chatId, srcMessageId: src.messageId }
+        : { text, parseMode: html ? 'HTML' : null }),
+      title: fullTitle,
     });
     startWorker(bot);
     return res.redirect(`/broadcasts?created=${id}`);

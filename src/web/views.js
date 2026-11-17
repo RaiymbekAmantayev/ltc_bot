@@ -206,18 +206,21 @@ export function broadcastFormPage({ f, title, counts, csrf, error, text = '', au
 <p class="note" style="margin:0 0 12px">Учеников по фильтру: <b>${counts.totalStudents}</b>, из них подключено к боту: <b>${counts.connected}</b>.
 Остальные сообщение не получат — писать первыми Telegram не позволяет.${restricted.length ? ` Дополнительно действует фильтр статусов из .env: ${esc(restricted.join(', '))}.` : ''}</p>
 ${error ? `<div class="err">${esc(error)}</div>` : ''}
-<form method="post" action="/broadcast">
+<form method="post" action="/broadcast" enctype="multipart/form-data">
 <input type="hidden" name="csrf" value="${esc(csrf)}">${hidden}
 <label>Аудитория</label>
 <select name="audience">${opt('all', 'Родители и ученики', counts.all)}${opt('parents', 'Только родители', counts.parents)}${opt('students', 'Только ученики', counts.students)}</select>
 <label class="chk"><input type="checkbox" name="personalize" value="1"${personalize ? ' checked' : ''}><span>Отдельное сообщение на каждого ученика с обращением <b>«Уважаемый родитель ученика Иванов Иван!»</b> (на языке получателя: по умолчанию казахский, русский — если выбран в боте). Если у родителя несколько детей, он получит по сообщению на каждого. Обращение пишется на языке получателя (по умолчанию қазақша, если язык не выбран), а основной текст уходит так, как вы его написали. Без галочки — одно сообщение на человека, без обращения.</span></label>
-<label>Текст сообщения (до 3800 символов)</label>
-<textarea name="text" rows="9" maxlength="3800" required>${esc(text)}</textarea>
+<label>Текст сообщения (до 3800 символов; с файлом — подпись до 1024 символов)</label>
+<textarea name="text" rows="9" maxlength="3800">${esc(text)}</textarea>
+<label>Файл (необязательно, до 50 МБ): фото, видео MP4, PDF, документ…</label>
+<input type="file" name="file">
+<p class="note" style="margin:4px 0 0">Файл один раз загружается в Telegram (в чат администратора — там вы увидите, как выглядит сообщение), дальше рассылка копирует его без повторной загрузки. Текст станет подписью к файлу; обращение к родителю придёт отдельным сообщением перед ним.${error ? ' <b>Если была ошибка — выберите файл заново.</b>' : ''} Видео больше 50 МБ разошлите из бота (/broadcast) или ссылкой.</p>
 <label class="chk"><input type="checkbox" name="html" value="1"${html ? ' checked' : ''}><span>Использовать HTML-форматирование: <code>&lt;b&gt;жирный&lt;/b&gt;</code>, <code>&lt;i&gt;курсив&lt;/i&gt;</code>, <code>&lt;a href="https://…"&gt;ссылка&lt;/a&gt;</code>. Без галочки текст уходит как есть.</span></label>
 <label class="chk"><input type="checkbox" name="confirm" value="1" required><span>Я проверил(а) текст и фильтр и подтверждаю отправку. Отменить уже отправленные сообщения нельзя.</span></label>
 <button>🚀 Отправить рассылку</button> <a class="btn2 sec" href="/${qs(f)}">Назад к списку</a>
 </form>
-<p class="note">Сообщение с фото, видео или файлом можно разослать из Telegram-бота командой /broadcast.</p>
+<p class="note">Несколько файлов одним альбомом и видео больше 50 МБ — через Telegram-бота командой /broadcast.</p>
 </div></div>`,
   );
 }
