@@ -335,8 +335,8 @@ async function callsOnDate(date, refresh) {
  * Активные ученики, у которых пользовательское поле «День обзвона постоянное» = day,
  * и был ли с ними (номер ученика или родителей) разговор длиннее 90 секунд в день date.
  */
-export async function getDailyCalls({ day: callDay, date, refresh = false }) {
-  const [{ students, groupsOf }, byPhone] = await Promise.all([getActive({ refresh }), callsOnDate(date, refresh)]);
+export async function getDailyCalls({ day: callDay, date, refresh = false, refreshCalls = refresh }) {
+  const [{ students, groupsOf }, byPhone] = await Promise.all([getActive({ refresh }), callsOnDate(date, refreshCalls)]);
   const rows = [];
   for (const s of students) {
     const ef = extraFields(s);

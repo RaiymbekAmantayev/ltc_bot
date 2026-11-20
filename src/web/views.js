@@ -34,6 +34,10 @@ textarea{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;
 .chk{display:flex;gap:8px;align-items:flex-start;margin:10px 0;color:var(--text);font-size:14px}.chk input{width:auto;margin-top:4px}
 .ok-msg{background:rgba(22,163,74,.12);color:var(--ok);padding:8px 10px;border-radius:8px;margin:12px 0}
 .bar2{height:8px;background:var(--line);border-radius:99px;overflow:hidden;min-width:90px}.bar2>i{display:block;height:100%;background:var(--accent)}
+.pairs{display:grid;gap:8px}.pair{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.pairs .pt{display:none}.pairs .pt+label{display:inline-block;width:auto;margin:0;padding:7px 12px;border:1px dashed var(--accent);border-radius:8px;color:var(--accent);font-size:14px;cursor:pointer;justify-self:start}
+.pairs .pt+label+.pair{display:none}.pairs .pt:checked+label{display:none}.pairs .pt:checked+label+.pair{display:grid}
+.pairs .pt:not(:checked)+label~label,.pairs .pt:not(:checked)~.pair.x{display:none}
 .ms{position:relative}
 .ms summary{list-style:none;cursor:pointer;font-weight:400;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ms summary::-webkit-details-marker{display:none}.ms summary::after{content:' ▾';color:var(--muted)}
@@ -252,6 +256,11 @@ export function mentorPage({ f, who, unregistered, statuses, branches, title, ac
   const section = (key, icon, head, body) => (reports && !reports.includes(key) ? '' : `<div class="card" style="margin-bottom:16px"><h2 style="margin-top:0;font-size:18px">${icon} ${head}</h2>${body}</div>`);
   const nav = '<a class="btn" href="/login">Админка</a><a class="btn" href="/coins">Кураторы</a>'; // вход в админку всегда по паролю администратора
   const active = esc(activeStatuses.join(', '));
+  // пары «день обзвона — дата звонков»; «+» без JS (CSP запрещает скрипты): скрытые чекбоксы открывают следующую пару
+  const DAILY_PAIRS = 8;
+  const pair = (i) => `<div class="pair${i ? ' x' : ''}"><div><label>День обзвона${i ? ` (${i + 1})` : ''}</label><input type="number" name="day" min="0" max="31"${i ? '' : ' required'} placeholder="например 3"></div>
+<div><label>Дата звонков (по умолчанию сегодня)</label><input type="date" name="date" value="${esc(today)}" max="${esc(today)}"></div></div>`;
+  const dailyPairs = Array.from({ length: DAILY_PAIRS }, (_, i) => (i ? `<input type="checkbox" class="pt" id="dp${i}"><label for="dp${i}">＋ Добавить день и дату</label>` : '') + pair(i)).join('');
   const weekAgo = new Date(Date.parse(today) - 7 * 86_400_000).toISOString().slice(0, 10);
 
   return layout(
@@ -275,14 +284,13 @@ ${section('not-attending', '🚫', 'Не посещают', `
 <form method="get" action="/mentor/not-attending.xlsx">${branchMs()}${refresh}<button>⬇ Скачать Excel</button></form>`)}
 ${section('daily', '📅', 'Ежедневная (план обзвона)', `
 <p class="note" style="margin:0 0 8px">Активные ученики, у которых в HolliHop поле «День обзвона постоянное» равно выбранному дню.
-Файл из двух листов: <b>Сводка</b> — запланировано / «Статус звонка» = Дозвон / фактически был разговор больше 90 секунд по «Мои звонки»
-(номер ученика или родителей) за выбранную дату, всего и по каждому ментору; <b>Ученики</b> — список.</p>
+Можно добавить несколько пар «день обзвона — дата звонков» кнопкой «+».
+Файл из двух листов: <b>Сводка</b> — по колонке на каждую пару, в ячейке «запланировано/дозвон/факт» (например 133/0/1):
+запланировано / «Статус звонка» = Дозвон / фактически был разговор больше 90 секунд по «Мои звонки»
+(номер ученика или родителей) за дату пары, всего и по каждому ментору; <b>Ученики</b> — список по всем парам.</p>
 <form method="get" action="/mentor/daily.xlsx">
-<div class="filters" style="margin:0">
-<div><label>День обзвона</label><input type="number" name="day" min="0" max="31" required placeholder="например 3"></div>
-<div><label>Дата звонков (по умолчанию сегодня)</label><input type="date" name="date" value="${esc(today)}" max="${esc(today)}"></div>
-${branchMs()}
-</div>
+<div class="pairs">${dailyPairs}</div>
+<div class="filters" style="margin:10px 0 0">${branchMs()}</div>
 ${refresh}<button>⬇ Скачать Excel</button></form>`)}
 ${section('no-calls', '📞', '14+ (нет звонков за 2 недели)', `
 <p class="note" style="margin:0 0 8px">Активные ученики (${active}), с которыми за последние 14 дней по «Мои звонки» не было разговора от 90 секунд —

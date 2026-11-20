@@ -667,40 +667,51 @@ export function startWebServer(bot = null) {
 
   app.get('/mentor/daily.xlsx', requireMentor, wrap(async (req, res) => {
     if (!isMoiZvonkiConfigured()) return res.status(503).send(errorPage('Интеграция «Мои звонки» не настроена (MOIZVONKI_* в .env).'));
-    const day = String(req.query.day ?? '').trim();
-    if (!/^\d{1,2}$/.test(day)) return res.status(400).send(errorPage('Выберите день обзвона.'));
     const today = new Date().toLocaleDateString('sv-SE', { timeZone: config.sync.timezone });
-    const date = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date)) && req.query.date <= today ? req.query.date : today;
+    // пары «день обзвона — дата звонков» (day и date повторяются в запросе по порядку); пустые дни пропускаются
+    const asList = (v) => (Array.isArray(v) ? v : v === undefined ? [] : [v]).map((x) => String(x ?? '').trim());
+    const days = asList(req.query.day);
+    const dates = asList(req.query.date);
+    const pairs = [];
+    days.forEach((day, i) => {
+      if (!/^\d{1,2}$/.test(day)) return;
+      const date = /^\d{4}-\d{2}-\d{2}$/.test(dates[i] || '') && dates[i] <= today ? dates[i] : today;
+      if (!pairs.some((p) => p.day === day && p.date === date)) pairs.push({ day, date, dateRu: date.split('-').reverse().join('.') });
+    });
+    if (!pairs.length) return res.status(400).send(errorPage('Выберите день обзвона.'));
+    if (pairs.length > 10) return res.status(400).send(errorPage('Не больше 10 пар «день — дата».'));
 
     const f = parseFilters(req.query);
     const ids = await effectiveBranches(req.role, f);
-    const { rows: all, minSec } = await getDailyCalls({ day, date, refresh: req.query.refresh === '1' });
-    const rows = all.filter(inBranches(ids));
-
-    // сводка: всего и по каждому ментору
-    const sum = (list) => [list.length, list.filter((r) => r.reached).length, list.filter((r) => r.actual).length];
-    const byMentor = new Map();
-    for (const r of rows) {
-      const key = r.mentor || 'без ментора';
-      if (!byMentor.has(key)) byMentor.set(key, []);
-      byMentor.get(key).push(r);
+    const refresh = req.query.refresh === '1';
+    let minSec = 90;
+    for (const [i, p] of pairs.entries()) {
+      // список учеников обновляем один раз, звонки — за каждую дату
+      const r = await getDailyCalls({ day: p.day, date: p.date, refresh: refresh && i === 0, refreshCalls: refresh });
+      p.rows = r.rows.filter(inBranches(ids));
+      minSec = r.minSec;
     }
-    const dateRu = date.split('-').reverse().join('.');
-    await sendWorkbook(res, `ezhednevnaya-den-${day}-${date}.xlsx`, [
+
+    // сводка: колонка на каждую пару, в ячейке «запланировано/дозвон/факт»; всего и по каждому ментору
+    const cell = (list = []) => `${list.length}/${list.filter((r) => r.reached).length}/${list.filter((r) => r.actual).length}`;
+    const mentors = [...new Set(pairs.flatMap((p) => p.rows.map((r) => r.mentor || 'без ментора')))].sort((a, b) => a.localeCompare(b, 'ru'));
+    const ofMentor = (p, m) => p.rows.filter((r) => (r.mentor || 'без ментора') === m);
+    const fileName = pairs.length === 1 ? `ezhednevnaya-den-${pairs[0].day}-${pairs[0].date}.xlsx` : `ezhednevnaya-${pairs.length}-par-${today}.xlsx`;
+    await sendWorkbook(res, fileName, [
       {
         name: 'Сводка',
         filter: false,
-        columns: [{ header: `День обзвона ${day} · звонки за ${dateRu}`, width: 36 }, { header: 'Запланировано', width: 15 },
-          { header: 'Дозвон (статус в HolliHop)', width: 18 }, { header: `Фактический (разговор > ${minSec} сек)`, width: 20 }],
-        rows: [['Всего', ...sum(rows)], [], ['Ментор'], ...[...byMentor].map(([m, list]) => [m, ...sum(list)])],
+        columns: [{ header: `Запланировано / Дозвон (статус в HolliHop) / Фактический (разговор > ${minSec} сек)`, width: 40, wrap: true },
+          ...pairs.map((p) => ({ header: `День обзвона ${p.day} · ${p.dateRu}`, width: 18 }))],
+        rows: [['Всего', ...pairs.map((p) => cell(p.rows))], [], ['Ментор'], ...mentors.map((m) => [m, ...pairs.map((p) => cell(ofMentor(p, m)))])],
       },
       {
         name: 'Ученики',
-        columns: [COL.hh, COL.name, COL.status, { header: 'Моб. телефон', width: 18 }, { header: 'Телефоны родителей', width: 36, wrap: true },
+        columns: [{ header: 'Дата звонков', width: 12 }, COL.hh, COL.name, COL.status, { header: 'Моб. телефон', width: 18 }, { header: 'Телефоны родителей', width: 36, wrap: true },
           { header: 'Ментор', width: 24 }, { header: 'День обзвона постоянное', width: 12 }, { header: 'Статус звонка', width: 14 }, COL.branch,
-          { header: `Фактический звонок ${dateRu}`, width: 14 }, { header: 'Звонков за день', width: 10 }, ...CALL_COLS('самый длинный разговор')],
-        rows: rows.map((r) => [r.hh_id, r.name, r.status, r.phone, r.parentPhones, r.mentor, r.callDay, r.callStatus, r.branches,
-          r.actual ? 'да' : 'нет', r.calls, ...callCells(r)]),
+          { header: 'Фактический звонок', width: 14 }, { header: 'Звонков за день', width: 10 }, ...CALL_COLS('самый длинный разговор')],
+        rows: pairs.flatMap((p) => p.rows.map((r) => [p.dateRu, r.hh_id, r.name, r.status, r.phone, r.parentPhones, r.mentor, r.callDay, r.callStatus, r.branches,
+          r.actual ? 'да' : 'нет', r.calls, ...callCells(r)])),
       },
     ]);
   }));
