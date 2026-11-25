@@ -197,3 +197,22 @@ CREATE TABLE IF NOT EXISTS coin_log (
   KEY idx_cl_employee (employee_id),
   KEY idx_cl_student (student_client_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Мини-отчёты родителям после урока (данные — /attendance-api/v1/lessons кабинета).
+-- Одна строка = одна запись урока (ученик × отметка) × один чат родителя; PK защищает от повторной отправки.
+CREATE TABLE IF NOT EXISTS lesson_reports (
+  record_id         VARCHAR(64) NOT NULL,              -- record_id кабинета: «<submission_id>:<ClientId>», при правке не меняется
+  chat_id           BIGINT NOT NULL,
+  student_client_id INT UNSIGNED NOT NULL,
+  lesson_date       DATE NOT NULL,
+  group_name        VARCHAR(255) NULL,
+  attendance        ENUM('present','absent') NOT NULL,
+  status            ENUM('sending','sent','failed','blocked') NOT NULL DEFAULT 'sending',
+  error             VARCHAR(255) NULL,
+  text              TEXT NULL,                         -- что именно ушло родителю
+  created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  sent_at           DATETIME NULL,
+  PRIMARY KEY (record_id, chat_id),
+  KEY idx_lr_student (student_client_id, lesson_date),
+  KEY idx_lr_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

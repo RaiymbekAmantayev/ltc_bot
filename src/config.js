@@ -82,4 +82,16 @@ export const config = {
     apiKey: process.env.MOIZVONKI_API_KEY || '',
   },
   allowedStatuses: list(process.env.RECIPIENT_STATUSES),
+  // Мини-отчёты родителям после урока: опрос /attendance-api/v1/lessons кабинета (Attendance)
+  lessonReports: {
+    enabled: process.env.LESSON_REPORTS_ENABLED === '1',
+    dryRun: process.env.LESSON_REPORTS_DRY_RUN === '1',          // только лог, без отправки и без отметки «отправлено»
+    url: (process.env.ATTENDANCE_API_URL || process.env.LTC_API_URL || '').replace(/\/+$/, ''),
+    key: process.env.ATTENDANCE_API_KEY || '',
+    cron: process.env.LESSON_REPORTS_CRON || '*/5 * * * *',
+    overlapMin: Math.max(1, Number(process.env.LESSON_REPORTS_OVERLAP_MIN || 15)),   // перекрытие окна опроса
+    maxAgeDays: Math.max(0, Number(process.env.LESSON_REPORTS_MAX_AGE_DAYS || 2)),  // уроки старше — не отправляем
+    excludeBranches: list(process.env.LESSON_REPORTS_EXCLUDE_BRANCHES ?? 'ТЕСТ'),
+    ratePerSec: Math.max(1, Math.min(25, Number(process.env.LESSON_REPORTS_RATE || 10))),
+  },
 };

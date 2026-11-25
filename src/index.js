@@ -8,6 +8,8 @@ import { ADMIN_COMMANDS } from './bot/admin.js';
 import { userCommands } from './i18n.js';
 import { runSync } from './hollihop/sync.js';
 import { startWorker } from './services/broadcast.js';
+import { pollLessonReports } from './services/lessonReports.js';
+import { attendanceConfigured } from './ltc/attendance.js';
 import { startWebServer } from './web/server.js';
 import { startWeb } from './web/server.js';
 
@@ -35,6 +37,15 @@ async function main() {
     bot.telegram
       .setMyCommands([...userCommands(row?.lang), ...ADMIN_COMMANDS], { scope: { type: 'chat', chat_id: id } })
       .catch(() => {}); // у админа должен быть хотя бы один /start с ботом
+  }
+
+  // мини-отчёты родителям после урока (данные кабинета Attendance)
+  if (config.lessonReports.enabled) {
+    if (!attendanceConfigured()) logger.warn('Мини-отчёты включены, но ATTENDANCE_API_KEY / адрес кабинета не заданы — опрос будет падать');
+    const pollReports = () => pollLessonReports(bot).catch((err) => logger.error({ err: err.message }, 'Мини-отчёты: опрос не удался'));
+    cron.schedule(config.lessonReports.cron, pollReports, tz);
+    pollReports();
+    logger.info({ cron: config.lessonReports.cron, dryRun: config.lessonReports.dryRun }, 'Мини-отчёты включены');
   }
 
   startWorker(bot); // продолжить рассылки, прерванные рестартом
